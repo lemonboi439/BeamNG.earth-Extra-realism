@@ -609,7 +609,10 @@ def main():
     with open(sea, "w", encoding="utf-8") as f:
         f.write(text)
 
-    print(f"wrote {len(files)} texture files and 1 roads material file to {OUT}")
+    for f in os.listdir(OUT):       # the PNGs were previews the DDS replace: keep the two materials still in PNG
+        if f.endswith(".png") and f not in ("t_bne_arrows.png", "t_bne_water_depth_ramp.png"):
+            os.remove(os.path.join(OUT, f))
+    print(f"wrote texture files and 1 roads material file to {OUT}")
     print("rewrote buildings/tunnel/dirtroad materials and sea.lua's water paths")
 
 
