@@ -38,7 +38,7 @@ class RailTagsTest(unittest.TestCase):
         lo, la = f.lonlat[0]
         key = mapcells.cell_of(float(la), float(lo))
         sx, sy = key.x >> (key.z - 7), key.y >> (key.z - 7)
-        shard = {"ways": {"11": {"railway": "proposed"}, "12": {"railway": "rail", "gauge": "1520"}},
+        shard = {"ways": {"11": {"railway": "proposed"}, "12": {"railway": "rail", "gauge": "1520", "tunnel": "yes"}},
                  "nodes": [[5, float(lo), float(la), {"railway": "level_crossing", "crossing:barrier": "full"}],
                            [6, float(lo) + 3.0, float(la), {"railway": "level_crossing"}]]}
         fetch = _Fetcher({"manifest.json": json.dumps({"built": "2026-10-30T03:00:00Z"}).encode(),
@@ -48,6 +48,7 @@ class RailTagsTest(unittest.TestCase):
             rt.join(f, key)
             self.assertEqual(list(f.attrs["osm_railway"]), ["proposed", "rail", None], "a road keeps none")
             self.assertEqual(f.attrs["osm_gauge"][1], "1520")
+            self.assertEqual(f.attrs["osm_tunnel"][1], "yes", "the shard's tunnel tag (railways._pieces)")
             self.assertEqual(len(f._rail_nodes), 1, "the cell's nodes only")
             n = len(fetch.asked)
             railtags.RailTags(d, fetch).join(f, key)        # (from disk: the manifest's day and the shard)

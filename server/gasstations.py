@@ -575,10 +575,10 @@ KITS = (
          pumps=((-4.74, 2.38), (0.05, -5.30), (0.29, 5.50), (5.08, -2.16)),
          pump=(_WCA + "s_fuel_pump_2000.dae", _WCA + "s_fuel_pump_2000_tyranos.dae")),
 )
-# every station's pumps: Trilobite's, as the roof slab's sign (the user, 2026-10-23: "the pumps are changing brands but
-# the canopy is not"; West Coast has no other stretchable roof)
-PUMP_KIT = KITS[0]
-BOLLARD = "/art/shapes/objects/bollard_yellow.dae"      # (global art; West Coast's fs_6: scale 1.5 1.5 1)
+# every station's pumps and forecourt: the mod's own models (tools/build_fuel_props.py), no stock map's shape
+_FUEL = "/levels/beamng_earth/art/shapes/beamngEarth/fuel/"
+PUMP_KIT = dict(KITS[0], pump=(_FUEL + "bne_fuel_pump.dae",))
+BOLLARD = _FUEL + "bne_fuel_bollard.dae"
 PAIR_GAP_M = 5.6                # the two pumps of a station without a canopy (fs_6)
 # A refuel area per pump, centred on it (gasStationMarker.lua: the vehicle's box against the area's, its scale as
 # half extents), in the pump's frame: a pump model's x runs along its island and its screens face +-y, the cars either
@@ -862,11 +862,11 @@ _ITA = "/levels/italy/art/shapes/buildings/italy_petrolstation_"
 # Italy's set, measured in game (2026-10-23): an awning half 12 m along its x, 6.53 m to its -y from its origin (two
 # turned 180 degrees about one origin make a 12 x 13 m section, italy_big_petrolstation.prefab), its pillars built in;
 # under each half a row of 2 pumps at x +-2.25, y -3.2 (the prefab's), turned as the awning (a pump's x along its row)
-ITA_AWNING = _ITA + "awningSt.DAE"
+ITA_AWNING = _FUEL + "bne_fuel_awning.dae"
 ITA_HALF = (6.0, 6.53)
 ITA_PUMP_XY = (2.25, 3.2)
-ITA_PUMPS = (_ITA + "pump_b.DAE", _ITA + "pump_c.DAE")
-ITA_SIGN = _ITA + "brandsign.DAE"
+ITA_PUMPS = (_FUEL + "bne_fuel_pump.dae", _FUEL + "bne_fuel_pump.dae")
+ITA_SIGN = _FUEL + "bne_fuel_sign.dae"
 ITA_KIT = dict(pump=(ITA_PUMPS[0],), dyaw=0.0, dz=0.0)
 ITA_SCALE = (0.6, 1.6)
 
@@ -908,7 +908,7 @@ def _italy_site(st, boxes, others, roads):
 # x = -5.215, 1.24 and 7.74, run along y over -9.2 .. -4.53 (centre -6.865) and are 0.2 m high; the dispensers at
 # y = -7.46; the roof 17.6 x 6.6 m (x -7.53 .. 10.1, y -10.04 .. -3.44) 4.7 m up. East Coast's own station (Gas_Station,
 # fuel_node_city / fuel_node_dealer) has a refuel area per island at the dispenser, 4 m across the island.
-ECA_UNIT = "/levels/east_coast_usa/art/shapes/buildings/eca_gastation_pumps.DAE"
+ECA_UNIT = _FUEL + "bne_fuel_unit.dae"
 ECA_ISLAND_X = (-5.215, 1.24, 7.74)
 ECA_ISLAND_STEP = (ECA_ISLAND_X[2] - ECA_ISLAND_X[0]) / 2
 ECA_ISLAND_Y = -6.865
@@ -1024,8 +1024,8 @@ ISLAND_MAX_M = 20.0             # a longer island is split, a pillar at each pie
 SHORT_ISLAND_M = 10.0           # an island this short (a narrow canopy's, across it) has one dispenser in its middle, a
                                 # pillar on it behind the pump and a bollard at each end (the user's photo, 2026-10-23)
 ISLAND_BREAK_M = 2.0            # the gap between the pieces
-_PILLAR = _WCA + "s_fuel_structure_07.dae"     # (fs_4: a 4.9 m pillar at each island's end ...)
-_ROOF = _WCA + "s_fuel_structure_06.dae"       # (... and a 14 x 17.2 m roof slab 4.8 m up)
+_PILLAR = _FUEL + "bne_fuel_pillar.dae"     # a 4.9 m pillar at each island's end
+_ROOF = _FUEL + "bne_fuel_canopy.dae"       # and a 14 x 17.2 m roof slab 4.8 m up
 ROOF_HALF = (7.0, 8.61)
 ROOF_DZ = 4.8
 

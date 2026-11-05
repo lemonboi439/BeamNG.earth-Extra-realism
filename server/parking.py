@@ -26,7 +26,8 @@ PARK_CLASSES = {"residential", "tertiary", "secondary", "unclassified", "living_
 SPOT_LEN_M = 6.5            # a spot's length along the curb (US parallel parking: 6-7 m)
 SPOT_W_M = 2.5              # the stock spot size (city.sites.json: 2.5 x 6 x 3)
 CURB_OFF_M = 1.25           # the spot's centre this far from the curb into the road
-MIN_WIDTH_M = 7.0           # narrower streets: no parking lane
+MIN_WIDTH_M = 5.5           # narrower streets: no parking lane (a 6 m estate road keeps 3.5 m beside one row:
+                            # Guinness Square's cars, 2026-11-04)
 BOTH_SIDES_M = 9.0          # wider streets park on both sides, narrower ones on one (hashed per street)
 STREET_SHARE = 0.85         # the share of eligible streets with curbside parking (hashed per street)
 CORNER_CLEAR_M = 9.0        # m kept clear of a run's ends (corners, crosswalks; US: 20 ft from a crosswalk)
@@ -45,41 +46,52 @@ def curb_spots(roads, walks, box, left_hand=False, directions=None):
     """Rows [x, y, z, heading] of the curbside spots of a tile box (x0, y0, x1, y1). roads: build_tile's
     (fid, spec, centreline (k, 3), lon); walks: its sidewalk runs (dicts with fid, pts, side, w). left_hand:
     traffic drives on the left (the car's left side to the curb). directions: fid -> +1 / -1, a one-way street's
-    traffic along / against its geometry (Overture's one-way rule; +1 when unknown)."""
+    traffic along / against its geometry (Overture's one-way rule; +1 when unknown).
+
+    A road without sidewalks still parks along its edge: the estate road whose front gardens the map leaves
+    untagged (Guinness Square, 2026-11-04, no cars in its courtyard), so its run is the curb line at half its
+    width (walk 0, the spot set CURB_OFF_M in)."""
     x0, y0, x1, y1 = box
     by_fid = {fid: (spec, pts) for fid, spec, pts, _ in roads}
-    out = []
+    runs = {}
     for wk in walks:
         fid = wk.get("fid")
         if fid is None or "pts" not in wk or fid not in by_fid:
             continue
-        spec, line = by_fid[fid]
+        runs.setdefault(fid, []).append((wk["side"], np.asarray(wk["pts"], np.float64), wk.get("w", 2.5)))
+    out = []
+    for fid, (spec, line) in by_fid.items():
         if not spec.urban or spec.cls not in PARK_CLASSES or spec.width < MIN_WIDTH_M:
             continue
         if furniture._h01(fid, "park") >= STREET_SHARE:
             continue
-        side = wk["side"]
-        if spec.width < BOTH_SIDES_M and side != (1 if furniture._h01(fid, "parkside") < 0.5 else -1):
-            continue
-        run = np.asarray(wk["pts"], np.float64)
-        if len(run) < 2:
-            continue
-        w = wk.get("w", 2.5)
-        phase = furniture._h01(fid, side, "parkph") * SPOT_LEN_M
-        for p, away in furniture._stations(run, line, SPOT_LEN_M, phase, CORNER_CLEAR_M, side):
-            q = p[:2] - away * (w / 2 + CURB_OFF_M)          # from the sidewalk's middle past the curb
-            if not (_owns(box, q[0], q[1])):
+        sides = runs.get(fid)
+        if not sides:       # no sidewalk (front gardens, an estate road): the carriageway's own edge
+            import roads as roadsmod
+            half = spec.width / 2
+            both = spec.width >= BOTH_SIDES_M
+            on = (1,) if furniture._h01(fid, "parkside") < 0.5 else (-1,)
+            sides = [(sd, roadsmod.offset_polyline(line, sd * half), 0.0) for sd in ((1, -1) if both else on)]
+        for side, run, w in sides:
+            if spec.width < BOTH_SIDES_M and side != (1 if furniture._h01(fid, "parkside") < 0.5 else -1):
                 continue
-            # the car's right side to the curb: heading h with right(h) = (h_y, -h_x) = away
-            if spec.oneway:
-                _, d = furniture._at(line, furniture._project(line, q[None]))
-                h = d[0] * (-1.0 if (directions or {}).get(fid, 1) < 0 else 1.0)
-            elif left_hand:             # left(h) = (-h_y, h_x) = away
-                h = np.array([away[1], -away[0]])
-            else:
-                h = np.array([-away[1], away[0]])
-            out.append([round(float(q[0]), 2), round(float(q[1]), 2), round(float(p[2]), 2),
-                        round(math.degrees(math.atan2(h[1], h[0])) % 360.0, 1)])
+            if len(run) < 2:
+                continue
+            phase = furniture._h01(fid, side, "parkph") * SPOT_LEN_M
+            for p, away in furniture._stations(run, line, SPOT_LEN_M, phase, CORNER_CLEAR_M, side):
+                q = p[:2] - away * (w / 2 + CURB_OFF_M)          # from the sidewalk's middle past the curb
+                if not (_owns(box, q[0], q[1])):
+                    continue
+                # the car's right side to the curb: heading h with right(h) = (h_y, -h_x) = away
+                if spec.oneway:
+                    _, d = furniture._at(line, furniture._project(line, q[None]))
+                    h = d[0] * (-1.0 if (directions or {}).get(fid, 1) < 0 else 1.0)
+                elif left_hand:             # left(h) = (-h_y, h_x) = away
+                    h = np.array([away[1], -away[0]])
+                else:
+                    h = np.array([-away[1], away[0]])
+                out.append([round(float(q[0]), 2), round(float(q[1]), 2), round(float(p[2]), 2),
+                            round(math.degrees(math.atan2(h[1], h[0])) % 360.0, 1)])
     return out
 
 
@@ -215,6 +227,42 @@ def lot_rings(frame, feats_list, paved_only=False):
     return out
 
 
+def aisle_lines(frame, cells):
+    """The mapped parking aisles' centre lines near a tile (road subclass parking_aisle), in the anchor frame."""
+    import roads
+    out = []
+    for f in cells:
+        if f is None or len(f) == 0:
+            continue
+        sub = f.rules.get("subclass")
+        specs = roads.road_specs(f)
+        for i, sp in enumerate(specs):
+            if sp is None or roads._rule_value(sub, i) != "parking_aisle":
+                continue
+            for ring in roads.ground_parts(f, i):
+                e, n, _ = frame.geodetic_to_enu(ring[:, 1], ring[:, 0], 0.0)
+                if len(e) >= 2:
+                    out.append(np.c_[e, n])
+    return out
+
+
+def lots_with_aisles(rings, aisles):
+    """Per lot ring: does a mapped aisle run through it? Its stalls and markings come from the aisle (aisle_spots /
+    aisle_markings); the lot's own oriented-box rows would duplicate and fight them."""
+    out = [False] * len(rings)
+    if not aisles:
+        return out
+    paths = [Path(np.asarray(r, np.float64)) for r in rings]
+    for ln in aisles:
+        pts = np.asarray(ln, np.float64)
+        if len(pts) == 0:
+            continue
+        for n, pa in enumerate(paths):
+            if not out[n] and pa.contains_points(pts).any():
+                out[n] = True
+    return out
+
+
 def tile_lot_spots(frame, tx, ty, md, elev, items=None, existing=None):
     """existing (the tile's other spots) with its lot stalls (aisle_spots' rows, kind 1) inside a building or a
     mapped lot dropped, plus lot_spots of road tile (tx, ty): the lots of the map cells under it (md:
@@ -230,20 +278,27 @@ def tile_lot_spots(frame, tx, ty, md, elev, items=None, existing=None):
         rings = lot_rings(frame, feats)
     except Exception:
         rings = []
-    paths = [Path(np.asarray(b, np.float64)) for b in blockers + rings if len(b) >= 3]
+    try:
+        road_feats = [md.cell(k, layers=("roads",), kind="demand").layers.get("roads")
+                      for k in roads.cells_of_tile(frame, tx, ty, margin=0.0)]
+        aisles = aisle_lines(frame, road_feats)
+    except Exception:
+        aisles = []
+    rect_rings = [r for r, has in zip(rings, lots_with_aisles(rings, aisles)) if not has]
+    paths = [Path(np.asarray(b, np.float64)) for b in blockers + rect_rings if len(b) >= 3]
     if paths and existing:
         pts = np.array([r[:2] for r in existing], np.float64)
         drop = np.zeros(len(existing), bool)
         for pa in paths:
             drop |= pa.contains_points(pts)
         existing = [r for r, d in zip(existing, drop) if not (d and len(r) > 4 and r[4] == 1)]
-    if not rings:
+    if not rect_rings:
         return existing
 
     def z_at(x, y):                 # the anchor frame's up, as the ground drawn (the Earth's curve: raw heights stood a
         la, lo, _ = frame.enu_to_geodetic(x, y, 0.0)    # spot ~6 m up 10 km from the anchor, 18 m at 15 km)
         return frame.geodetic_to_enu(la, lo, np.asarray(elev(la, lo), np.float64))[2]
-    return existing + lot_spots(rings, box, z_at, blockers)
+    return existing + lot_spots(rect_rings, box, z_at, blockers)
 
 
 AISLE_END_M = 6.0           # stalls kept this far from an aisle's ends (its junctions)
@@ -590,9 +645,16 @@ def finish_markings(frame, tx, ty, md, elev, items=None, marks=()):
         rings = lot_rings(frame, feats, paved_only=True)
     except Exception:
         rings = []
+    try:
+        road_feats = [md.cell(k, layers=("roads",), kind="demand").layers.get("roads")
+                      for k in roads.cells_of_tile(frame, tx, ty, margin=0.0)]
+        aisles = aisle_lines(frame, road_feats)
+    except Exception:
+        aisles = []
+    rect_rings = [r for r, has in zip(rings, lots_with_aisles(rings, aisles)) if not has]
 
     def z_at(x, y):
         la, lo, _ = frame.enu_to_geodetic(np.asarray(x, np.float64), np.asarray(y, np.float64), 0.0)
         return frame.geodetic_to_enu(la, lo, np.asarray(elev(la, lo), np.float64))[2]
 
-    return drop_covered(marks, blockers + rings) + lot_markings(rings, box, z_at, blockers)
+    return drop_covered(marks, blockers + rect_rings) + lot_markings(rect_rings, box, z_at, blockers)

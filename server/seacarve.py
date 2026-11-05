@@ -309,6 +309,15 @@ class SeaCarver:
                     self._mem.popitem(last=False)
             return r
 
+    def shrink(self, keep):
+        """The rasters of the cells keep(x, y) is False for (z14 cell coordinates), dropped (a teleport's
+        prune: the next raster() re-reads the cell's mmap/npz). Returns the count dropped."""
+        with self._lock:
+            gone = [k for k in self._mem if not keep(*k)]
+            for k in gone:
+                del self._mem[k]
+        return len(gone)
+
     def _path(self, x, y):
         rel = getattr(self.md, "release", "x")
         lakes = "lakes" if self.dem is not None else "sea"

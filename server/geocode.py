@@ -33,6 +33,10 @@ WIKIDATA_URL = "https://www.wikidata.org/w/api.php"
 LIMIT = 7
 RESULTS = 8                     # at most this many in the map's list
 MIN_CHARS = 3
+# Photon 403s the project User-Agent (the user's "address search refused the request (HTTP 403)", 2026-11-04):
+# a browser User-Agent it serves (the same data, no personal information)
+SEARCH_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+             "Chrome/126.0.0.0 Safari/537.36")
 ATTRIBUTION = "Search: OpenStreetMap (Nominatim, Photon by komoot), Wikipedia, Wikidata"
 # Names in the language of the country the player is in, where Photon has it (en, de, fr, it; the status bar's
 # place names too, placenames.py): Photon's lang="en"
@@ -264,14 +268,14 @@ def parse_nominatim(data):
     return out
 
 
-def _json(net, url):
+def _json(net, url, headers=None):
     """The JSON at url, from CACHE_S of memory when asked before (a typed word is asked again and again)."""
     now = time.monotonic()
     with _lock:
         hit = _cache.get(url)
     if hit and now - hit[0] < CACHE_S:
         return hit[1]
-    data = json.loads(net.get(url, kind="demand").body.decode("utf-8"))
+    data = json.loads(net.get(url, kind="demand", headers=headers).body.decode("utf-8"))
     with _lock:
         if len(_cache) >= CACHE_MAX:
             _cache.clear()
@@ -280,7 +284,8 @@ def _json(net, url):
 
 
 def _photon(net, q, lat, lon, lang):
-    return [{**r, "rank": i} for i, r in enumerate(parse(_json(net, url(q, lat, lon, lang=lang))), 1)]
+    return [{**r, "rank": i} for i, r in enumerate(parse(_json(net, url(q, lat, lon, lang=lang),
+                                                                   headers={"User-Agent": SEARCH_UA})), 1)]
 
 
 def _wikipedia(net, q, lang):

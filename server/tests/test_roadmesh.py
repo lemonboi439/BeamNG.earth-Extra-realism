@@ -41,6 +41,14 @@ class RoadMeshTest(unittest.TestCase):
         self.assertLessEqual(np.diff(np.unique(np.round(base[:, 0], 3))).max(), roadmesh.DRAPE_STEP + 1e-6)
         self.assertTrue(set(np.unique(UV[:, 0])) <= {0.0, 1.0}, "u across the width")
 
+    def test_u0_places_a_lane_in_the_decal(self):
+        """A lane strip samples its slice of the stock decal: u0 at its left edge, tu across it (roads.lane_strips)."""
+        c = chunk("road_asphalt_2lane", 3.3, [(0, 0, 0), (20, 0, 0)])
+        c["tu"], c["u0"] = 3.3 / 8.0, 0.25
+        P, T, UV, mats, M = roadmesh.build(FRAME, [c], lambda la, lo: np.zeros(np.shape(la)), (0.0, 0.0, 0.0))
+        self.assertAlmostEqual(float(UV[:, 0].min()), 0.25, places=6)
+        self.assertAlmostEqual(float(UV[:, 0].max()), 0.25 + 3.3 / 8.0, places=6)
+
     def test_writes_one_primitive_per_material(self):
         chunks = [chunk("road_asphalt_2lane", 6.0, [(0, 0, 0), (30, 0, 0)]),
                   chunk("gutter1", 0.5, [(0, 3, 0), (30, 3, 0)]),

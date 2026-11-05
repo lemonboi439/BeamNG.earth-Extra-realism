@@ -7,10 +7,9 @@
     "persistentId": "8f0c6a51-3d2e-5b7a-9c41-2e6d8b1f7a93",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/terrain/soil/t_gravel/t_gravel_b.png",
-        "normalMap": "/assets/materials/terrain/soil/t_gravel/t_gravel_nm.png",
-        "roughnessMap": "/assets/materials/terrain/soil/t_gravel/t_gravel_r.png",
-        "ambientOcclusionMap": "/assets/materials/terrain/soil/t_gravel/t_gravel_ao.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_ballast_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_ballast_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_ballast_r.data.dds",
         "metallicFactor": 0,
         "baseColorFactor": [
           0.55,
@@ -34,10 +33,9 @@
     "persistentId": "2b7e4c90-6a1d-5f38-8e52-9d4a0c3b6f17",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_b.color.png",
-        "normalMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_nm.normal.png",
-        "roughnessMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_r.data.png",
-        "ambientOcclusionMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_ao.data.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds",
         "metallicFactor": 0,
         "baseColorFactor": [
           0.42,
@@ -115,10 +113,9 @@
     "persistentId": "9ad9dd62-4ce9-5e3d-81f4-7fa1710ca7af",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/stone/m_stonebrick_mixed_01/t_stonebrick_mixed_01_b.color.png",
-        "normalMap": "/assets/materials/tileable/stone/m_stonebrick_mixed_01/t_stonebrick_mixed_01_nm.normal.png",
-        "roughnessMap": "/assets/materials/tileable/stone/m_stonebrick_mixed_01/t_stonebrick_mixed_01_r.data.png",
-        "ambientOcclusionMap": "/assets/materials/tileable/stone/m_stonebrick_mixed_01/t_stonebrick_mixed_01_ao.data.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_stone_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_stone_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_stone_r.data.dds",
         "metallicFactor": 0,
         "baseColorFactor": [
           0.92,
@@ -142,10 +139,9 @@
     "persistentId": "ef9843c2-f603-5455-9e38-76fdc283406d",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/stone/m_stonebrick_mixed_01/t_stonebrick_mixed_01_b.color.png",
-        "normalMap": "/assets/materials/tileable/stone/m_stonebrick_mixed_01/t_stonebrick_mixed_01_nm.normal.png",
-        "roughnessMap": "/assets/materials/tileable/stone/m_stonebrick_mixed_01/t_stonebrick_mixed_01_r.data.png",
-        "ambientOcclusionMap": "/assets/materials/tileable/stone/m_stonebrick_mixed_01/t_stonebrick_mixed_01_ao.data.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_stone_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_stone_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_stone_r.data.dds",
         "metallicFactor": 0,
         "baseColorFactor": [
           0.5,
@@ -169,10 +165,9 @@
     "persistentId": "569ac43d-9576-542c-973d-787ab367f694",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/terrain/grass/t_grass_01/t_grass_01_b.png",
-        "normalMap": "/assets/materials/terrain/grass/t_grass_01/t_grass_01_nm.png",
-        "roughnessMap": "/assets/materials/terrain/grass/t_grass_01/t_grass_01_r.png",
-        "ambientOcclusionMap": "/assets/materials/terrain/grass/t_grass_01/t_grass_01_ao.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_r.data.dds",
         "metallicFactor": 0,
         "baseColorFactor": [
           0.36,
@@ -196,10 +191,9 @@
     "persistentId": "bc1b6d10-11af-5832-a1ba-19f3c7c6d37b",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/decalroad/concrete/decalroad_concrete/t_highway_concrete_b.color.png",
-        "normalMap": "/assets/materials/decalroad/concrete/decalroad_concrete/t_highway_concrete_nm.normal.png",
-        "roughnessMap": "/assets/materials/decalroad/concrete/decalroad_concrete/t_highway_concrete_r.data.png",
-        "ambientOcclusionMap": "/assets/materials/decalroad/concrete/decalroad_concrete/t_highway_concrete_ao.data.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds",
         "metallicFactor": 0,
         "pixelSpecular": true
       },
@@ -218,10 +212,9 @@
     "persistentId": "5b4d08dc-d5e1-5360-878b-21c4c0b4fe26",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_b.color.png",
-        "normalMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_nm.normal.png",
-        "roughnessMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_r.data.png",
-        "ambientOcclusionMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_ao.data.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds",
         "metallicFactor": 0,
         "baseColorFactor": [
           0.82,
@@ -245,8 +238,8 @@
     "persistentId": "ad3581d8-d936-5215-8d12-3fd09a53eb6b",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_d.color.dds",
-        "normalMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_nm.normal.dds",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_nm.normal.dds",
         "roughnessFactor": 0.6,
         "metallicFactor": 0.3,
         "baseColorFactor": [
@@ -254,7 +247,8 @@
           0.63,
           0.62,
           1
-        ]
+        ],
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_r.data.dds"
       },
       {},
       {},
@@ -271,8 +265,8 @@
     "persistentId": "595b5773-6684-5237-8ddb-06ecb19fa06e",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_d.color.dds",
-        "normalMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_nm.normal.dds",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_nm.normal.dds",
         "roughnessFactor": 0.6,
         "metallicFactor": 0.3,
         "baseColorFactor": [
@@ -280,7 +274,8 @@
           0.29,
           0.0,
           1
-        ]
+        ],
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_r.data.dds"
       },
       {},
       {},
@@ -297,8 +292,8 @@
     "persistentId": "6981125d-09a9-5c06-99db-9fc0b87c6bb2",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_d.color.dds",
-        "normalMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_nm.normal.dds",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_nm.normal.dds",
         "roughnessFactor": 0.6,
         "metallicFactor": 0.3,
         "baseColorFactor": [
@@ -306,7 +301,8 @@
           0.098,
           0.078,
           1
-        ]
+        ],
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_r.data.dds"
       },
       {},
       {},
@@ -323,8 +319,8 @@
     "persistentId": "18a7a69a-49ad-55f0-9fa1-a2c1911a70e9",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_d.color.dds",
-        "normalMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_nm.normal.dds",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_nm.normal.dds",
         "roughnessFactor": 0.6,
         "metallicFactor": 0.3,
         "baseColorFactor": [
@@ -332,7 +328,8 @@
           0.392,
           0.275,
           1
-        ]
+        ],
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_r.data.dds"
       },
       {},
       {},
@@ -349,8 +346,8 @@
     "persistentId": "5d7724a0-91e5-5aba-bff8-b21c959cb9a5",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_d.color.dds",
-        "normalMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_nm.normal.dds",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_nm.normal.dds",
         "roughnessFactor": 0.6,
         "metallicFactor": 0.3,
         "baseColorFactor": [
@@ -358,7 +355,8 @@
           0.314,
           0.51,
           1
-        ]
+        ],
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_r.data.dds"
       },
       {},
       {},
@@ -375,8 +373,8 @@
     "persistentId": "fd74009f-676c-5dd4-9103-c95fa0aff527",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_d.color.dds",
-        "normalMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_nm.normal.dds",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_nm.normal.dds",
         "roughnessFactor": 0.6,
         "metallicFactor": 0.3,
         "baseColorFactor": [
@@ -384,7 +382,8 @@
           0.098,
           0.098,
           1
-        ]
+        ],
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_r.data.dds"
       },
       {},
       {},
@@ -401,8 +400,8 @@
     "persistentId": "88ea6be3-6d29-5ada-96d8-15ba2e7231c5",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_d.color.dds",
-        "normalMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_nm.normal.dds",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_nm.normal.dds",
         "roughnessFactor": 0.6,
         "metallicFactor": 0.3,
         "baseColorFactor": [
@@ -410,7 +409,8 @@
           0.882,
           0.863,
           1
-        ]
+        ],
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_r.data.dds"
       },
       {},
       {},
@@ -427,8 +427,8 @@
     "persistentId": "50605b1b-e44d-5292-88f8-2249987295c4",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_d.color.dds",
-        "normalMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_nm.normal.dds",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_nm.normal.dds",
         "roughnessFactor": 0.6,
         "metallicFactor": 0.3,
         "baseColorFactor": [
@@ -436,7 +436,8 @@
           0.667,
           0.118,
           1
-        ]
+        ],
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_r.data.dds"
       },
       {},
       {},
@@ -453,8 +454,8 @@
     "persistentId": "f99c3a4e-b4a7-5e4a-bb20-094e611b6491",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_d.color.dds",
-        "normalMap": "/assets/materials/tileable/metal/metal_paint/metal_paint_nm.normal.dds",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_nm.normal.dds",
         "roughnessFactor": 0.6,
         "metallicFactor": 0.3,
         "baseColorFactor": [
@@ -462,7 +463,8 @@
           0.235,
           0.157,
           1
-        ]
+        ],
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_r.data.dds"
       },
       {},
       {},
@@ -479,10 +481,9 @@
     "persistentId": "d2660d55-7212-555e-83a2-0b6ca50a26b1",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_b.color.png",
-        "normalMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_nm.normal.png",
-        "roughnessMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_r.data.png",
-        "ambientOcclusionMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_ao.data.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds",
         "metallicFactor": 0,
         "baseColorFactor": [
           0.36,
@@ -506,10 +507,9 @@
     "persistentId": "591d15c9-815b-5518-9668-00787ef4d544",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/terrain/grass/t_dirt_vegetation/t_dirt_vegetation_b.png",
-        "normalMap": "/assets/materials/terrain/grass/t_dirt_vegetation/t_dirt_vegetation_nm.png",
-        "roughnessMap": "/assets/materials/terrain/grass/t_dirt_vegetation/t_dirt_vegetation_r.png",
-        "ambientOcclusionMap": "/assets/materials/terrain/grass/t_dirt_vegetation/t_dirt_vegetation_ao.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_ballast_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_ballast_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_ballast_r.data.dds",
         "metallicFactor": 0,
         "baseColorFactor": [
           0.62,
@@ -533,10 +533,9 @@
     "persistentId": "7c7c9460-1fb8-5b3a-ba65-29d36edaf618",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/terrain/soil/t_dirt_dry_grassy/t_dirt_dry_grassy_b.png",
-        "normalMap": "/assets/materials/terrain/soil/t_dirt_dry_grassy/t_dirt_dry_grassy_nm.png",
-        "roughnessMap": "/assets/materials/terrain/soil/t_dirt_dry_grassy/t_dirt_dry_grassy_r.png",
-        "ambientOcclusionMap": "/assets/materials/terrain/soil/t_dirt_dry_grassy/t_dirt_dry_grassy_ao.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_ballast_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_ballast_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_ballast_r.data.dds",
         "metallicFactor": 0,
         "baseColorFactor": [
           0.5,
@@ -560,10 +559,9 @@
     "persistentId": "6920750d-5eb0-5173-905b-01ab01b2ef43",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_b.color.png",
-        "normalMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_nm.normal.png",
-        "roughnessMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_r.data.png",
-        "ambientOcclusionMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_ao.data.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds",
         "metallicFactor": 0,
         "baseColorFactor": [
           0.3,
@@ -611,10 +609,9 @@
     "persistentId": "d364e483-ecf2-50c9-a4a9-b34d7ee84460",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/terrain/asphalt/asphalt/t_asphalt_b.png",
-        "normalMap": "/assets/materials/terrain/asphalt/asphalt/t_asphalt_nm.png",
-        "roughnessMap": "/assets/materials/terrain/asphalt/asphalt/t_asphalt_r.png",
-        "ambientOcclusionMap": "/assets/materials/terrain/asphalt/asphalt/t_asphalt_ao.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_asphalt_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_asphalt_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_asphalt_r.data.dds",
         "metallicFactor": 0,
         "baseColorFactor": [
           0.52,
@@ -638,10 +635,9 @@
     "persistentId": "89fea456-d542-5544-a477-307c8aef4301",
     "Stages": [
       {
-        "baseColorMap": "/assets/materials/terrain/rock/t_dirt_rocky/t_dirt_rocky_b.png",
-        "normalMap": "/assets/materials/terrain/rock/t_dirt_rocky/t_dirt_rocky_nm.png",
-        "roughnessMap": "/assets/materials/terrain/rock/t_dirt_rocky/t_dirt_rocky_r.png",
-        "ambientOcclusionMap": "/assets/materials/terrain/rock/t_dirt_rocky/t_dirt_rocky_ao.png",
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_rock_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_rock_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_rock_r.data.dds",
         "metallicFactor": 0,
         "baseColorFactor": [
           0.62,

@@ -118,6 +118,52 @@ class RegionStyleTest(unittest.TestCase):
             self.assertIsNone(h.pitch)
 
 
+class RoofHonestyTest(unittest.TestCase):
+    """Mapped heights survive a guessed roof (P2.3): the walls are not eaten by a gable, a mapped roof height is
+    exact, and the mapped ridge axis is honoured."""
+
+    def test_a_wide_houses_guessed_roof_keeps_its_walls(self):
+        s = bld.plan(rect(0, 0, 60, 20), {"class": "house", "height": 10.0}, 0)
+        self.assertLessEqual(10.0 - s.height, bld.ROOF_RISE_MAX_SHARE * 10.0 + 1e-6)
+        self.assertGreaterEqual(s.height, 10.0 - bld.ROOF_RISE_MAX_SHARE * 10.0 - 1e-6)
+        self.assertIsNotNone(s.pitch, "the capped roof's pitch is stored")
+
+    def test_a_mapped_roof_height_is_exact(self):
+        s = bld.plan(rect(0, 0, 20, 10), {"class": "house", "height": 10.0, "roof_height": 3.0}, 0)
+        self.assertAlmostEqual(s.height, 7.0, places=6, msg="walls = the mapped height less the mapped roof")
+        # the drawn roof's rise is the mapped 3 m (pitch from the half span)
+        _, _, _hl, _hw = bld.oriented_box(bld.drawn_ring(s))
+        # (EAVE_M widens the drawn box; the net rise over the wall top is what the height took out)
+        self.assertAlmostEqual(s.height + 3.0, 10.0, places=6)
+
+    def test_roof_orientation_across_swaps_the_ridge(self):
+        s = bld.plan(rect(0, 0, 40, 10), {"class": "house", "roof_shape": "gabled", "height": 8.0,
+                                          "roof_orientation": "across"}, 0)
+        self.assertTrue(s.roof_across)
+        P = bld.build([(s, 0.0, 0.0)])[0]
+        top = P[P[:, 2] > P[:, 2].max() - 0.05]
+        self.assertGreater(float(np.ptp(top[:, 1])), float(np.ptp(top[:, 0])),
+                           "the ridge runs along the short (y) side")
+
+    def test_roof_direction_matching_the_short_axis_goes_across(self):
+        s = bld.plan(rect(0, 0, 40, 10), {"class": "house", "roof_shape": "gabled", "height": 8.0,
+                                          "roof_direction": 0.0}, 0)
+        self.assertTrue(s.roof_across)
+        s2 = bld.plan(rect(0, 0, 40, 10), {"class": "house", "roof_shape": "gabled", "height": 8.0,
+                                           "roof_direction": 90.0}, 0)
+        self.assertFalse(s2.roof_across)
+
+
+class FootprintTest(unittest.TestCase):
+    def test_an_l_shaped_house_is_not_drawn_as_its_bounding_box(self):
+        # (0.75 of its oriented box: a pitched roof drew the box and grew over the notch - placement/scale, 2026-11-05)
+        ring = np.array([(0.0, 0.0), (20.0, 0.0), (20.0, 10.0), (10.0, 10.0),
+                         (10.0, 20.0), (0.0, 20.0)], np.float64)
+        sp = bld.plan(ring, {"class": "house"})
+        self.assertEqual(sp.roof, "flat")
+        np.testing.assert_allclose(bld.drawn_ring(sp), ring, atol=1e-9)
+
+
 class PlanTest(unittest.TestCase):
     def test_hut_above_the_tree_line_is_stone(self):
         # the user, 2026-10-14: Mount Whitney's stone summit shelter was a plain grey box
@@ -398,6 +444,24 @@ class MeshTest(unittest.TestCase):
             spec, P = self.check_outward(rect(0, 0, 12, 8), {"class": "house", "roof_shape": shape})
             self.assertEqual(spec.roof, shape)
             self.assertGreater(P[:, 2].max(), spec.height + 1.5, "a ridge above the eaves")
+
+
+class BaseZTest(unittest.TestCase):
+    def spec(self, gring=None, portal=False):
+        sp = bld.plan(rect(0, 0, 20, 12), {"class": "retail", "height": 9.0})
+        sp.gring = None if gring is None else np.asarray(gring, np.float64)
+        sp.portal = portal
+        return sp
+
+    def test_a_sloped_footprint_stands_at_its_median_ground(self):
+        sp = self.spec([2.0, 2.2, 2.4, 2.6])
+        self.assertAlmostEqual(bld.base_z(sp, 2.0, 2.6), 2.3)
+
+    def test_no_corner_ground_keeps_the_old_highest(self):
+        self.assertAlmostEqual(bld.base_z(self.spec(), 1.0, 3.0), 3.0)
+
+    def test_a_portal_building_stays_at_the_road(self):
+        self.assertAlmostEqual(bld.base_z(self.spec([2.0, 2.6], portal=True), 2.0, 2.6), 2.0)
 
 
 class DoorTest(unittest.TestCase):
@@ -1122,6 +1186,19 @@ class BridgeStructureTest(unittest.TestCase):
         P = bld.build([(spec, 0.0, 0.0)])[0]
         self.assertAlmostEqual(P[:, 2].max(), 12.0, places=3)
 
+
+
+class CollisionConsistencyTest(unittest.TestCase):
+    """The lean collider matches the drawn walls (P2.5): its foot at the drawn skirt, its lid at the eaves (the roof
+    stays render-only, as before)."""
+
+    def test_lid_at_the_eaves_foot_at_the_skirt(self):
+        spec = bld.plan(rect(0, 0, 40, 20), {"class": "house", "height": 10.0}, 0)
+        P = bld.build([(spec, 0.0, 0.0)])[0]
+        self.assertGreater(float(P[:, 2].max()), spec.height, "the drawn roof rises over the eaves")
+        Pc = bld.collision_mesh([(spec, 5.0, 5.0)])[0]
+        self.assertAlmostEqual(float(Pc[:, 2].max()), 5.0 + spec.height, places=3, msg="lid at the eaves")
+        self.assertAlmostEqual(float(Pc[:, 2].min()), 5.0 - bld.SKIRT_M, places=3, msg="foot at the drawn skirt")
 
 
 class StoopTest(unittest.TestCase):

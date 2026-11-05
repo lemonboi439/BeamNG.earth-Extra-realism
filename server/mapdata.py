@@ -102,9 +102,10 @@ VERSION = 2                     # pipeline version: bump when what a cell's laye
 # overture._SRC_OWN: only cells fetched after it; the cached ones get it with the next Overture release bump, as #184)
 # roads 8: a segment's src_record is its OpenStreetMap way, the one covering most of it, also on numbered roads (the
 # route's relation came first in its sources: no way id, so none of OpenStreetMap's lanes, width, maxspeed or lane tags);
-# the "src_ways" rule holds each way's range on a segment of several (overture.way_sources)
-# (and PR #471's validated highway lane counts, current-way geometry evidence; merged before roads 8 was released)
-LAYER_VERSIONS = {"roads": 8}
+# the "src_ways" rule holds each way's range on a segment of several (overture.way_sources); rail segments carry OSM's
+# tunnel / bridge / layer (railtags.COLUMNS: railways._pieces reads them where Overture has no ranges)
+# roads 9: both roads 8 changes together (the merged tree)
+LAYER_VERSIONS = {"roads": 9}
 # (LidarBC's measured canopy heights, maprasters.bc_canopy, are opt-in: BNE_BC_CANOPY=1 fills cells built after it;
 # no canopy version bump, which would fetch every player's canopy cells again)
                                 # (2: clipped polygon pieces `own`ed by their cell, exact cell edges,
@@ -836,6 +837,15 @@ class MapData:
             while self._mem_bytes > MEM_MB * 1e6 and len(self._mem) > 1:
                 _, (_, _, n) = self._mem.popitem(last=False)
                 self._mem_bytes -= n
+
+    def shrink(self, keep):
+        """The decoded layers of the cells keep(cell) is False for, dropped (a teleport's prune: the next cell()
+        re-reads them from the cell's file). Returns the count dropped."""
+        with self._mem_lock:
+            gone = [k for k in self._mem if not keep(k[0])]
+            for k in gone:
+                self._mem_bytes -= self._mem.pop(k)[2]
+        return len(gone)
 
     def warm(self, needs, kind="demand"):
         """Build the (cell, layer)s of needs into the cache ahead of the cell() calls that will ask for them, in their

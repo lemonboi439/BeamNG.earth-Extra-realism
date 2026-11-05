@@ -342,16 +342,23 @@ class ShoulderTest(unittest.TestCase):
 
 
 class FakeMD:
-    def __init__(self, feats):
-        self.feats, self.calls = feats, 0
+    def __init__(self, feats, buildings=None, infrastructure=None):
+        self.feats, self.buildings, self.infrastructure = feats, buildings, infrastructure
+        self.calls, self.road_calls = 0, 0
 
     def cell(self, key, layers=None, kind=None):
         self.calls += 1
+        if layers is None or "roads" in layers:
+            self.road_calls += 1
 
         class C:
             pass
         c = C()
         c.layers = {"roads": self.feats}
+        if self.buildings is not None:
+            c.layers["buildings"] = self.buildings
+        if self.infrastructure is not None:
+            c.layers["infrastructure"] = self.infrastructure
         return c
 
 
@@ -362,6 +369,81 @@ class FailingMD:
     def cell(self, key, layers=None, kind=None):
         self.calls += 1
         raise OSError("offline")
+
+
+class BuildingPadTest(unittest.TestCase):
+    """A building's footprint gets a level pad (P2.1): the ground under it flattened, sloping back to the natural
+    ground outside; the road grading runs over it."""
+
+    @staticmethod
+    def buildings(squares):
+        import mapgeom
+        coords, coord_off = [], [0]
+        for x, y, w, d in squares:
+            e = np.array([x, x + w, x + w, x, x], float)
+            n = np.array([y, y, y + d, y + d, y], float)
+            la, lo, _ = FRAME.enu_to_geodetic(e, n, 0.0)
+            coords.extend(zip(lo, la))
+            coord_off.append(len(coords))
+        k = len(squares)
+        return mapgeom.Features(layer="buildings", ids=np.array([f"b{i}" for i in range(k)]),
+                                kind=np.full(k, mapgeom.POLYGON, np.uint8),
+                                part_off=np.arange(k + 1, dtype=np.int64), ring_off=np.arange(k + 1, dtype=np.int64),
+                                coord_off=np.array(coord_off, np.int64), lonlat=np.array(coords, np.float64),
+                                attrs={})
+
+    def test_a_building_flattens_its_ground(self):
+        def elev(la, lo):
+            e, _n, _ = FRAME.geodetic_to_enu(np.asarray(la), np.asarray(lo), 0.0)
+            return 10.0 + 0.05 * np.asarray(e)
+        f = features([[(-300, 300), (300, 300)]], ["residential"])     # (a road far from the building)
+        md = FakeMD(f, buildings=self.buildings([(0.0, 0.0, 20.0, 10.0)]))
+        g = grading.Grader(FRAME, md, elev)
+        pts = np.array([(5.0, 5.0), (15.0, 5.0), (0.0, 0.0), (21.0, 5.0), (100.0, 5.0)])
+        la, lo, _ = FRAME.enu_to_geodetic(pts[:, 0], pts[:, 1], 0.0)
+        base = elev(la, lo)
+        z = g.apply(la, lo, base)
+        pad = 10.0 + 0.05 * 10.0            # (the median of the corners: the box spans x 0..20)
+        self.assertAlmostEqual(float(z[0]), pad, places=2)
+        self.assertAlmostEqual(float(z[1]), pad, places=2)
+        self.assertAlmostEqual(float(z[2]), pad, places=2, msg="the uphill corner cut down")
+        self.assertGreater(float(z[3]), float(z[1]), "the blend back to the natural ground")
+        self.assertLess(float(z[3]), float(base[3]))
+        self.assertAlmostEqual(float(z[4]), float(base[4]), places=2, msg="away from the building: natural ground")
+        natural = g.apply(la, lo, base, planned_only=True)
+        self.assertAlmostEqual(float(natural[0]), float(base[0]), places=2,
+                               msg="planned_only applies no pads (no blocking building fetch)")
+
+
+class LotPadTest(unittest.TestCase):
+    """A mapped parking lot gets a level pad (P2.4), as a building's footprint does."""
+
+    @staticmethod
+    def lots():
+        import mapgeom
+        e = np.array([0.0, 60.0, 60.0, 0.0, 0.0])
+        n = np.array([0.0, 0.0, 40.0, 40.0, 0.0])
+        la, lo, _ = FRAME.enu_to_geodetic(e, n, 0.0)
+        return mapgeom.Features(layer="infrastructure", ids=np.array(["p0"]), kind=np.full(1, mapgeom.POLYGON, np.uint8),
+                                part_off=np.array([0, 1], np.int64), ring_off=np.array([0, 1], np.int64),
+                                coord_off=np.array([0, 5], np.int64),
+                                lonlat=np.array(list(zip(lo, la)), np.float64),
+                                attrs={"class": np.array(["parking"], object)})
+
+    def test_a_lot_is_flattened(self):
+        def elev(la, lo):
+            e, _n, _ = FRAME.geodetic_to_enu(np.asarray(la), np.asarray(lo), 0.0)
+            return 10.0 + 0.05 * np.asarray(e)
+        f = features([[(-300, 300), (300, 300)]], ["residential"])
+        g = grading.Grader(FRAME, FakeMD(f, infrastructure=self.lots()), elev)
+        pts = np.array([(10.0, 20.0), (50.0, 20.0), (100.0, 20.0)])
+        la, lo, _ = FRAME.enu_to_geodetic(pts[:, 0], pts[:, 1], 0.0)
+        base = elev(la, lo)
+        z = g.apply(la, lo, base)
+        pad = 10.0 + 0.05 * 30.0             # (the median of the corners: the lot spans x 0..60)
+        self.assertAlmostEqual(float(z[0]), pad, places=2)
+        self.assertAlmostEqual(float(z[1]), pad, places=2)
+        self.assertAlmostEqual(float(z[2]), float(base[2]), places=2)
 
 
 class GraderTest(unittest.TestCase):
@@ -955,3 +1037,51 @@ class CoarseEaseTest(unittest.TestCase):
     def test_equal_ranks_meet_halfway(self):
         main, side = self.run_ease(100.0, 104.0, 7.0, rank_side=7)
         self.assertLess(float(np.median(side) - np.median(main)), 2.5)
+
+
+class PlannerEvictionTest(unittest.TestCase):
+    """The PLAN_MEM_MB eviction (2026-11-04 RAM overhaul): a planner over its budget drops the cells farthest
+    from the last query (never a queried one), and the graded output stays byte-identical — an evicted cell
+    re-plans deterministically, and its plans live on disk (plancache)."""
+
+    @staticmethod
+    def grid(x0, x1, n):
+        x = np.linspace(x0, x1, n)
+        la, lo, _ = FRAME.enu_to_geodetic(x, np.zeros(n), 0.0)
+        return la, lo
+
+    def test_eviction_keeps_output_byte_identical(self):
+        import geotiles
+        road = [[(e, 0.0) for e in np.linspace(-1600, 1600, 65)]]
+        f = features(road, ["residential"])
+
+        def elev(la, lo):
+            return np.full(np.shape(la), 10.0)
+        la, lo = self.grid(-1500.0, 1500.0, 60)
+        base = np.full(len(la), 5.0)
+        g = grading.Grader(FRAME, FakeMD(f), elev)
+        a = g.apply(la, lo, base.copy())
+        pl = next(iter(g.store.planners.values()))
+        n_cells = len(pl.cells)
+        self.assertGreater(n_cells, 3, "the road spans several map cells")
+        self.assertTrue(np.any(a != base), "graded under the road")
+        # a far place in the SAME planning region (the eviction is per planner)
+        region = geotiles.region_of(float(np.mean(la)), float(np.mean(lo)))
+        far = None
+        for dy in (5000.0, 8000.0, -5000.0, 12000.0, 3000.0, -3000.0, 10000.0, -8000.0):
+            fla, flo, _ = FRAME.enu_to_geodetic(np.zeros(1), np.array([dy]), 0.0)
+            if geotiles.region_of(float(fla[0]), float(flo[0])) == region:
+                far = (fla, flo)
+                break
+        self.assertIsNotNone(far, "a far place inside the region")
+        with unittest.mock.patch.object(grading, "PLAN_MEM_MB", 0.005):     # 5 KB: eviction after every cell
+            g2 = grading.Grader(FRAME, FakeMD(f), elev)
+            b1 = g2.apply(la, lo, base.copy())
+            np.testing.assert_array_equal(b1, a, "the first pass grades the same under eviction")
+            pl2 = next(iter(g2.store.planners.values()))
+            g2.apply(far[0], far[1], np.full(np.shape(far[0]), 5.0))       # a query far from the road
+            self.assertLess(len(pl2.cells), n_cells, "the far query evicted road cells")
+            kept = {k for k in pl2.cells}
+            self.assertTrue(kept, "the queried cells stay")
+            b2 = g2.apply(la, lo, base.copy())
+            np.testing.assert_array_equal(b2, a, "re-planned after the eviction: byte-identical")

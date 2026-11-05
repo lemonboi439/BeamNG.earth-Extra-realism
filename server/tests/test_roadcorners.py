@@ -256,7 +256,7 @@ class RuralTeeTest(unittest.TestCase):
         self.assertEqual(roads._going_on(rows), {("a", "b"), ("b", "a")})
 
     def test_corners_with_sidewalks_are_unchanged(self):
-        f = tee("residential")
+        f = tee("tertiary")     # (untagged residential streets get no invented sidewalk since 2026-11-04)
         urban = lambda la, lo: np.ones(np.shape(la), bool)      # noqa: E731
         self.assertTrue(all(roads.has_sidewalks(sp) for sp in roads.road_specs(f, urban)))
         self.assertEqual(roadcorners.source([f], urban, frame=FRAME)[2], [])

@@ -179,6 +179,15 @@ class RespawningPool:
             pass
         return True
 
+    def worst_rss_mb(self):
+        """The largest working set (MB) of the pool's worker processes, or None when none could be read
+        (the server's prune: a worker far over the cache budgets is restarted after a teleport)."""
+        with self._lock:
+            pids = list((getattr(self._pool, "_processes", None) or {}).keys())
+        import budget
+        vals = [v for v in (budget.rss_mb(p) for p in pids) if v is not None]
+        return max(vals) if vals else None
+
     def shutdown(self, *args, **kwargs):
         with self._lock:
             pool = self._pool

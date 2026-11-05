@@ -27,6 +27,7 @@ docs/research/ortho/
 .venv/
 .beamng_earth.json
 dist/
+dist*/
 native/earthfast/target/
 build/
 native/serverlist/target/

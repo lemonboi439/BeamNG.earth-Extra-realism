@@ -124,10 +124,10 @@ class RulesTest(unittest.TestCase):
         f.attrs["osm_sidewalk"] = np.array(["both", "left", "right", "separate", ""], object)
         town = lambda lat, lon: np.ones(len(lat), bool)                                  # noqa: E731
         s = roads.road_specs(f, urban_fn=town)
-        self.assertEqual([roads.has_sidewalks(sp) for sp in s], [True, True, True, False, True])
+        self.assertEqual([roads.has_sidewalks(sp) for sp in s], [True, True, True, False, False])
         self.assertEqual(roads.walk_sides(s[1]), (1,))
         self.assertEqual(roads.walk_sides(s[2]), (-1,))
-        self.assertEqual(roads.walk_sides(s[4]), (1, -1))                                # untagged: the town rule
+        self.assertFalse(roads.has_sidewalks(s[4]), "untagged residential: no invented sidewalk")
         rural = roads.road_specs(features([[(0, 0), (100, 0)]], ["residential"]))[0]
         self.assertFalse(roads.has_sidewalks(rural))                                     # untagged, rural: none
 
@@ -142,7 +142,7 @@ class RulesTest(unittest.TestCase):
         f.attrs["osm_sidewalk"] = np.array(["", "", "", "", "", "", "both"], object)
         s = roads.road_specs(f, urban_fn=lambda lat, lon: np.ones(len(lat), bool))
         #                                         ramp   fast-less  90      50    60     street  tagged
-        self.assertEqual([roads.has_sidewalks(sp) for sp in s], [False, False, False, True, True, True, True])
+        self.assertEqual([roads.has_sidewalks(sp) for sp in s], [False, False, False, True, True, False, True])
         self.assertTrue(s[0].link and s[0].oneway)
 
     def test_rock_and_grass_live_in_the_ground_layer(self):
@@ -181,9 +181,10 @@ class RulesTest(unittest.TestCase):
         self.assertEqual(s[4][:2], (roads.STYLE["track"][0], "gravel"))
         self.assertIsNone(s[5], "bridge flag left out")
 
-    def test_carriageway_parking_and_strips(self):
+    def test_carriageway_and_strips(self):
         res = roads.STYLE["residential"][0]
-        self.assertEqual(roads.carriageway("residential", "paved", True), res + 2 * roads.PARKING_M, "city street: parking")
+        self.assertEqual(roads.carriageway("residential", "paved", True), res,
+                         "a city street is its driving width; parking is not invented (the map's width has it)")
         self.assertEqual(roads.carriageway("residential", "paved", False), res + 2 * roads.EDGE_STRIP_M, "rural: strips")
         self.assertEqual(roads.carriageway("motorway", "paved", True), 2 * roads.LANE_W["motorway"],
                          "two lanes by default, no parking on motorways")
@@ -194,8 +195,55 @@ class RulesTest(unittest.TestCase):
     def test_urban_from_land_cover(self):
         f = features([[(0, 0), (10, 0)], [(0, 100), (10, 100)]], ["residential", "residential"], widths=[(1, 9.0)])
         s = roads.road_specs(f, lambda lat, lon: np.ones(np.shape(lat), bool))
-        self.assertEqual(s[0][0], roads.STYLE["residential"][0] + 2 * roads.PARKING_M)
-        self.assertEqual(s[1][0], 9.0, "width rule wins over the parking guess")
+        self.assertEqual(s[0][0], roads.STYLE["residential"][0])
+        self.assertEqual(s[1][0], 9.0, "width rule wins over the class default")
+
+
+class ResidentialAccuracyTest(unittest.TestCase):
+    """An untagged residential street keeps its real width (Wickenden Crescent, 2026-11-04): no invented parking
+    lanes, no invented sidewalk, and a building-to-building ray across the front gardens is not a carriageway."""
+
+    def test_an_untagged_residential_street_is_not_widened(self):
+        sp = roads.Spec(roads.carriageway("residential", "paved", True), "paved", True, "residential", False, 2.5, 0)
+        self.assertAlmostEqual(sp.width, roads.STYLE["residential"][0])
+        self.assertFalse(roads.has_sidewalks(sp))
+
+    def test_front_gardens_measured_between_houses_are_rejected(self):
+        f = features([[(-100, 0), (100, 0)]], ["residential"])
+
+        class W:
+            def __call__(self, fid, ll):
+                return (12.0, 4.0)
+        town = lambda lat, lon: np.ones(np.shape(lat), bool)     # noqa: E731
+        s = roads.road_specs(f, town, W())[0]
+        self.assertAlmostEqual(s.width, roads.STYLE["residential"][0], msg="a 20 m front-garden span is no carriageway")
+        self.assertFalse(roads.has_sidewalks(s), "front gardens: no invented sidewalk")
+
+    def test_a_walled_street_keeps_its_measured_width_and_sidewalk(self):
+        f = features([[(-100, 0), (100, 0)]], ["residential"])
+
+        class W:
+            def __call__(self, fid, ll):
+                return (5.4, 1.0)
+        town = lambda lat, lon: np.ones(np.shape(lat), bool)     # noqa: E731
+        s = roads.road_specs(f, town, W())[0]
+        self.assertAlmostEqual(s.width, 5.4)
+        self.assertTrue(roads.has_sidewalks(s), "a walled street keeps its measured sidewalk")
+
+
+class RingTest(unittest.TestCase):
+    """A mapped roundabout is its ring width (one lane 5.5 m), not a class-wide road, and keeps its edge line."""
+
+    def test_a_roundabout_is_the_ring_width(self):
+        f = features([[(0, 0), (30, 0), (30, 30), (0, 30), (0, 0)]], ["primary"], ids=["r"])
+        f.attrs["osm_junction"] = np.array(["roundabout"], object)
+        f.attrs["osm_sidewalk"] = np.array(["no"], object)
+        town = lambda lat, lon: np.ones(np.shape(lat), bool)     # noqa: E731
+        sp = roads.road_specs(f, town)[0]
+        self.assertAlmostEqual(sp.width, roads.ring_width(1), places=2)
+        self.assertFalse(roads.has_sidewalks(sp))
+        chunks = roads.build_tile(FRAME, 0, 0, [f], flat, town)
+        self.assertTrue(any(c["m"] == roads.EDGE_LINE["m"] for c in chunks), "edge line round the ring")
 
 
 class DualCarriagewayTest(unittest.TestCase):
@@ -315,18 +363,45 @@ class BuildTileTest(unittest.TestCase):
         f = features([[(-300, 50), (300, 50)], [(100, 10), (100, 200)]], ["primary", "track"])
         surfaces = {l["m"] for l in roads.LOOK.values()} | set(roads.DIRT_MATERIALS)
         chunks = [c for c in roads.build_tile(FRAME, 0, 0, [f], flat) if c["m"] in surfaces]
-        self.assertEqual(len(chunks), 2, "one surface chunk per road (lines and sidewalks aside)")
-        prim = next(c for c in chunks if c["w"] == roads.STYLE["primary"][0] + 2 * roads.EDGE_STRIP_M)
-        xs = [n[0] for n in prim["n"]]
-        self.assertAlmostEqual(min(xs), -roads.OVERLAP, delta=0.05)
-        self.assertAlmostEqual(max(xs), roads.TILE + roads.OVERLAP, delta=0.05)
-        self.assertTrue(all(abs(n[1] - 50) < 0.3 for n in prim["n"]), "on its line (the test helper is spherical: ~0.13 m)")
-        self.assertEqual(prim["m"], roads.LOOK["paved"]["m"])
-        track = next(c for c in chunks if c is not prim)
+        prim_w = roads.STYLE["primary"][0] + 2 * roads.EDGE_STRIP_M
+        paved = [c for c in chunks if c["m"] == roads.LOOK["paved"]["m"]]
+        self.assertEqual(len(paved), 4, "a chunk a lane and an edge strip (the primary's two + two)")
+        self.assertAlmostEqual(sum(c["w"] for c in paved), prim_w, delta=0.05, msg="the strips cover the carriageway")
+        self.assertAlmostEqual(min(n[1] - c["w"] / 2 for c in paved for n in c["n"]), 50 - prim_w / 2, delta=0.5)
+        self.assertAlmostEqual(max(n[1] + c["w"] / 2 for c in paved for n in c["n"]), 50 + prim_w / 2, delta=0.5)
+        for prim in paved:
+            xs = [n[0] for n in prim["n"]]
+            self.assertAlmostEqual(min(xs), -roads.OVERLAP, delta=0.05)
+            self.assertAlmostEqual(max(xs), roads.TILE + roads.OVERLAP, delta=0.05)
+            self.assertTrue(all(abs(n[2] - 10.0) < 0.05 for n in prim["n"]),
+                            "z on the DEM (flat, near the anchor)")
+        self.assertAlmostEqual(paved[0]["u0"], 0.0, places=3, msg="u starts at the carriageway's left edge")
+        self.assertAlmostEqual(paved[-1]["u0"] + paved[-1]["tu"], prim_w / roads.ASPHALT_TEX_W, delta=0.02,
+                               msg="the texture runs on across the lanes instead of stretching once")
+        track = next(c for c in chunks if c["m"] in roads.DIRT_MATERIALS)
         self.assertIn(track["m"], roads.DIRT_VARIATIONS)
         self.assertAlmostEqual(track["tl"], roads.DIRT_LOOK["dirt"]["aspect"] * track["w"], places=2)
         self.assertGreater(track["s1"], track["s0"], "the strip's distance runs along the road")
-        self.assertTrue(all(abs(n[2] - 10.0) < 0.05 for n in prim["n"]), "z on the DEM (flat, near the anchor)")
+
+    def test_paved_carriageway_is_a_chunk_a_lane(self):
+        """A lane and its parking/edge strips are their own chunk; the stock 2-lane asphalt decal is sampled across
+        (ASPHALT_TEX_W), so a six-lane motorway is not one 2-lane texture stretched over 27 m."""
+        sp = roads.Spec(width=roads.carriageway("motorway", "paved", False, None, True, 6), kind="paved",
+                        urban=False, cls="motorway", oneway=True, lanes=6)
+        drive, lanes = roads.lane_layout(sp)
+        strips = roads.lane_strips(sp)
+        self.assertEqual(lanes, 6)
+        self.assertEqual(len(strips), lanes + 2, "six lanes and the two shoulders")
+        self.assertAlmostEqual(sum(w for _, w, _ in strips), sp.width, delta=0.01)
+        for off, w, u0 in strips:
+            self.assertAlmostEqual(u0, (off - w / 2 + sp.width / 2) / roads.ASPHALT_TEX_W, places=4)
+        self.assertEqual([w for _, w, _ in strips[1:-1]], [drive / lanes] * lanes)
+        f = features([[(0, 30), (200, 30)]], ["motorway"])
+        f.rules["oneway"] = rules([(0, 1.0)], "float")
+        f.attrs["osm_lanes"] = np.array([6.0])
+        chunks = [c for c in roads.build_tile(FRAME, 0, 0, [f], flat) if c["m"] == roads.LOOK["paved"]["m"]]
+        self.assertEqual(len(chunks), lanes + 2)
+        self.assertTrue(all(abs(c["tu"] - c["w"] / roads.ASPHALT_TEX_W) < 1e-3 for c in chunks))
 
     def test_ramps_one_lane_wide(self):
         f = features([[(0, 0), (100, 0)]] * 3, ["motorway", "motorway", "primary"])
@@ -446,6 +521,7 @@ class BuildTileTest(unittest.TestCase):
 
     def test_city_street_sidewalks_and_lines_stop_at_crossings(self):
         f = features([[(-300, 100), (300, 100)], [(120, -100), (120, 300)]], ["secondary", "residential"])
+        f.attrs["osm_sidewalk"] = np.array(["", "both"], object)      # (the crescent's map tag: sidewalks)
         chunks = roads.build_tile(FRAME, 0, 0, [f], flat, lambda la, lo: np.ones(np.shape(la), bool))
         by = {}
         for c in chunks:
@@ -473,7 +549,16 @@ class BuildTileTest(unittest.TestCase):
         for c in res_walk:                       # ... and the residential's stops at its outer edge
             for x, y, _ in c["n"]:
                 self.assertGreater(abs(y - 100), sec_w / 2 + sw - 0.6, (x, y))
-        yc = next(c["n"][0][1] for c in by[roads.LOOK["paved"]["m"]] if abs(c["n"][0][1] - 100) < 1)
+        strips = [c for c in by[roads.LOOK["paved"]["m"]] if c.get("n") and not c.get("poly")
+                  and max(n[1] for n in c["n"]) - min(n[1] for n in c["n"]) < 2.0]     # (the secondary's own)
+        ys_paved = [n[1] for c in strips for n in c["n"]]
+        w_paved = [c["w"] / 2 for c in strips for _ in c["n"]]
+        self.assertAlmostEqual(min(y - h for y, h in zip(ys_paved, w_paved)), 100 - sec_w / 2, delta=0.5,
+                               msg="the lane strips cover the carriageway")
+        self.assertAlmostEqual(max(y + h for y, h in zip(ys_paved, w_paved)), 100 + sec_w / 2, delta=0.5)
+        ys_strip = sorted(c["n"][0][1] for c in strips)
+        self.assertEqual(len(ys_strip), 2, "one strip a lane (no invented parking strips)")
+        yc = 0.5 * (ys_strip[0] + ys_strip[1])   # (two lanes: the pair brackets the line)
         ys = sorted({round(c["n"][0][1], 3) for c in by["line_yellow"]})
         self.assertTrue(any(abs(y - (yc + roads.CENTRE["gap"])) < 0.01 for y in ys) and
                         any(abs(y - (yc - roads.CENTRE["gap"])) < 0.01 for y in ys), (yc, ys))
@@ -640,10 +725,11 @@ class BuildTileTest(unittest.TestCase):
         import tempfile
         import junctions
         import sidewalks
-        # four residential streets meeting at (120, 120) (Overture: split at the junction)
+        # four tertiary streets meeting at (120, 120) (Overture: split at the junction; tertiary keeps the
+        # default sidewalks the corners are cut from)
         X = (120.0, 120.0)
         arms = [[X, (300, 120)], [X, (120, 300)], [X, (-60, 120)], [X, (120, -60)]]
-        f = features(arms, ["residential"] * 4)
+        f = features(arms, ["tertiary"] * 4)
         walks = []
         chunks = roads.build_tile(FRAME, 0, 0, [f], flat, lambda la, lo: np.ones(np.shape(la), bool), walks=walks)
         corners = [w["corner"] for w in walks if "corner" in w]
@@ -653,12 +739,14 @@ class BuildTileTest(unittest.TestCase):
         self.assertEqual(len(cw), 4, "a crosswalk on each arm")
         self.assertTrue(sum(len(w["ramps"]) for w in runs) + sum(len(c["ramps"]) for c in corners) >= 8,
                         "two curb ramps per crosswalk")
-        # residential streets with parking: no curb extensions (GitHub #208), the corners at the parking curb
-        wd = roads.carriageway("residential", "paved", True) / 2
-        cls_ = [np.array(c["n"])[:, :2] for c in chunks if c["m"] == roads.LOOK["paved"]["m"] and c["n"]]
+        # no curb extensions (GitHub #208): the corners at the carriageway's edge
+        wd = roads.carriageway("tertiary", "paved", True) / 2
+        paved = [(np.array(c["n"])[:, :2], c["w"] / 2) for c in chunks
+                 if c["m"] == roads.LOOK["paved"]["m"] and c.get("n") and not c.get("poly")]
         for c in corners:
-            d = np.min([junctions._seg_dist(c["arc"][:, :2], ln) for ln in cls_], axis=0)
-            self.assertGreater(float(d.min()), wd - 0.1, "the curb never on the parking lane")
+            for ln, half in paved:
+                d = junctions._seg_dist(c["arc"][:, :2], ln)
+                self.assertGreater(float(d.min()), half - 0.1, "the curb never on the parking lane")
             self.assertEqual(len(c["ramps"]), 0, "the crosswalks land on the sidewalk runs, not the corners")
         for c in chunks:
             if c["m"] == junctions.CROSSWALK["m"]:
@@ -667,7 +755,7 @@ class BuildTileTest(unittest.TestCase):
         for c in chunks:                        # no markings through the junction or its crosswalks
             if c["m"].startswith("line_") and c["w"] != junctions.STOP_LINE["w"]:
                 for x, y, _ in c["n"]:
-                    self.assertGreater(max(abs(x - X[0]), abs(y - X[1])), w + junctions.RADII["residential"], (x, y))
+                    self.assertGreater(max(abs(x - X[0]), abs(y - X[1])), w + junctions.RADII["tertiary"], (x, y))
         stops = [c for c in chunks if c["m"] == junctions.STOP_LINE["m"] and c["w"] == junctions.STOP_LINE["w"]]
         self.assertEqual(len(stops), 4, "a stop line on each approach")
         for c in stops:                         # on the approach half, beyond the crosswalk
@@ -700,7 +788,7 @@ class BuildTileTest(unittest.TestCase):
         X = (120.0, 120.0)
         c30 = (120 + 180 * math.cos(math.radians(30)), 120 + 180 * math.sin(math.radians(30)))
         arms = [[X, (300, 120)], [X, c30], [X, (-60, 120)]]
-        f = features(arms, ["residential"] * 3)
+        f = features(arms, ["tertiary"] * 3)
         walks = []
         roads.build_tile(FRAME, 0, 0, [f], flat, lambda la, lo: np.ones(np.shape(la), bool), walks=walks)
         corners = [w["corner"] for w in walks if "corner" in w]
@@ -709,7 +797,7 @@ class BuildTileTest(unittest.TestCase):
         self.assertEqual(len(tips), 1, "the tip has its curb return")
         arc = tips[0]["arc"][:, :2]
         self.assertLess(float(np.hypot(*(arc - np.array(X)).T).min()), 40.0)
-        self.assertLessEqual(junctions.ACUTE_R_MIN, junctions.RADII["residential"])
+        self.assertLessEqual(junctions.ACUTE_R_MIN, junctions.RADII["tertiary"])
 
     def test_junction_short_connector_no_corner_on_roads(self):
         import junctions
@@ -741,16 +829,18 @@ class BuildTileTest(unittest.TestCase):
         A, B = (120.0, 120.0), (127.0, 113.0)
         arms = [[A, (120, 300)], [A, (-60, 120)], [A, B], [B, (127, -60)], [B, (300, 113)]]
         f = features(arms, ["residential"] * 5)
+        f.attrs["osm_sidewalk"] = np.array(["both"] * 5, object)   # (mapped sidewalks; the short connector's runs
+                                                                  # are clipped away, its corners stay)
         walks = []
         roads.build_tile(FRAME, 0, 0, [f], flat, lambda la, lo: np.ones(np.shape(la), bool), walks=walks)
         corners = [wk["corner"] for wk in walks if "corner" in wk]
-        self.assertEqual(len(corners), 4)
+        self.assertGreaterEqual(len(corners), 4, "a curb return in each quadrant (the connector's ends too)")
         w = roads.carriageway("residential", "paved", True) / 2
         lines = [np.array(a, np.float64) for a in arms]
         for c in corners:
             probe = c["arc"][:, :2] + c["inward"] * 1.0
             for ln in lines:
-                self.assertGreater(junctions._seg_dist(probe, ln).min(), w - 0.5 - roads.PARKING_M)
+                self.assertGreater(junctions._seg_dist(probe, ln).min(), w - 0.5)
         mid = np.array([(A[0] + B[0]) / 2, (A[1] + B[1]) / 2])
         for r in [wk for wk in walks if "pts" in wk]:
             self.assertGreater(np.hypot(*(r["pts"][:, :2] - mid).T).min(), w, "no sidewalk along the connector")
@@ -1276,6 +1366,22 @@ class InGroundTest(unittest.TestCase):
         surfaces = {l["m"] for l in roads.LOOK.values()}
         self.assertFalse([c for c in chunks if c["m"] in surfaces], "no carriageway mesh")
         self.assertTrue([c for c in chunks if c["m"] not in surfaces], "its lines stay")
+
+    def test_road_surface_draws_lane_meshes_over_the_paint(self):
+        """Detail mode (ROAD_SURFACE, blockworker.init): the near ground is a drawn photo, so the paved carriageways
+        are meshes over it: a chunk a lane, the paint still under them."""
+        f = features([[(-300, 50), (300, 50)]], ["primary"])
+        saved, roads.ROAD_SURFACE = roads.ROAD_SURFACE, False
+        try:
+            painted = roads.build_tile(FRAME, 0, 0, [f], flat)
+            self.assertFalse([c for c in painted if c["m"] == roads.LOOK["paved"]["m"] and c.get("n")])
+            roads.ROAD_SURFACE = True
+            meshed = roads.build_tile(FRAME, 0, 0, [f], flat)
+        finally:
+            roads.ROAD_SURFACE = saved
+        lanes = [c for c in meshed if c["m"] == roads.LOOK["paved"]["m"] and c.get("n")]
+        self.assertTrue(lanes, "the lane meshes")
+        self.assertTrue(all(c.get("tu") and "u0" in c for c in lanes), "the decal sampled, not stretched")
 
 
 def _strips(tx, feats):

@@ -39,7 +39,7 @@ M.LEVEL_ID = 'beamng_earth'
 M.SCHEMA = {
   -- the quality presets (M.PRESETS; the user, 2026-10-28: "proper quality presets", picked from the hardware on the
   -- first run: M.detectQuality); 'custom' once a knob is changed away from every preset
-  quality = { kind = 'enum', default = 'auto', values = { 'auto', 'low', 'medium', 'high', 'ultra', 'extreme', 'custom' },
+  quality = { kind = 'enum', default = 'auto', values = { 'auto', 'low', 'traffic', 'medium', 'high', 'ultra', 'extreme', 'custom' },
     label = 'Quality' },
   -- tree density (trees.lua QUALITY_LEVELS: ranks and tile caps) and draw distance (DISTANCES: the rings and the
   -- server's tree tile reach), split 2026-10-28 (the user: "give player much more control in the graphics settings")
@@ -156,6 +156,10 @@ M.PRESETS = {
   low = { trees = 'low', treeDistance = 'near', groundCover = false, groundCoverDensity = 'low', grassDistance = 'near',
     rocks = true, nightLights = 'few', viewDistanceMode = 'fixed', viewDistanceKm = 40, terrainDetail = 'low',
     buildingDistance = 'near', groundPhoto = '1024', objectDetail = 'game', distantTrafficQuality = 'low' },
+  traffic = { trees = 'medium', treeDistance = 'medium', groundCover = false, groundCoverDensity = 'low',
+    grassDistance = 'near', rocks = true, nightLights = 'few', viewDistanceMode = 'horizon', viewDistanceKm = 100,
+    terrainDetail = 'normal', buildingDistance = 'normal', groundPhoto = '2048', objectDetail = 'game',
+    distantTrafficQuality = 'low' },       -- the city with BeamNG traffic: no grass carpet, medium trees, low lights
   medium = { trees = 'medium', treeDistance = 'medium', groundCover = true, groundCoverDensity = 'low',
     grassDistance = 'normal', rocks = true, nightLights = 'few', viewDistanceMode = 'horizon', viewDistanceKm = 100,
     terrainDetail = 'normal', buildingDistance = 'normal', groundPhoto = '2048', objectDetail = 'game', distantTrafficQuality = 'medium' },
@@ -169,7 +173,7 @@ M.PRESETS = {
     grassDistance = 'far', rocks = true, nightLights = 'many', viewDistanceMode = 'horizon', viewDistanceKm = 100,
     terrainDetail = 'extreme', buildingDistance = 'max', groundPhoto = '4096', objectDetail = 'extreme', distantTrafficQuality = 'high' },
 }
-M.PRESET_ORDER = { 'low', 'medium', 'high', 'ultra', 'extreme' }
+M.PRESET_ORDER = { 'low', 'traffic', 'medium', 'high', 'ultra', 'extreme' }
 
 -- The server's knobs (core.sendGraphics, the 'graphics' message): the far field's K table times TERRAIN_DETAIL (64
 -- cells, Baltimore's first selection, 2026-10-28: 0.75 -> 0.78x the far tiles, 1.3 -> ~1.3x, 1.6 -> ~1.6x, 2 -> 2.1x;

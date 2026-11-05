@@ -20,6 +20,15 @@ def flat(xy):
 
 
 class RailwayTest(unittest.TestCase):
+    def test_a_tunnel_bore_fits_regular_trains(self):
+        # no scaling the track down for the tunnel: standard gauge, a full ballast bed and a bore wider than a train
+        self.assertEqual(railways.gauge("standard_gauge"), 1.435)
+        self.assertGreaterEqual(2 * railways.BALLAST_TOP_M, 3.4, "the ballast top carries a full sleeper")
+        import roadmesh
+        self.assertGreaterEqual(railways.TUNNEL_BORE_W, 6.0)
+        self.assertGreater(railways.TUNNEL_BORE_W / 2 + roadmesh.TUNNEL_SHOULDER, 3.2,
+                           "a 3.2 m train fits with clearance")
+
     def test_distant_bridge_of_a_nearby_feature_is_not_profiled(self):
         # One feature crosses the tile, but its last 100 m is a bridge 5 km away.
         f = features([[(-100.0, 100.0), (5000.0, 100.0), (5100.0, 100.0)]],
@@ -63,6 +72,38 @@ class RailwayTest(unittest.TestCase):
         self.assertEqual(len(parts), 1, "the existing reach supplies bridge and approach context")
         np.testing.assert_allclose(parts[0][3][[0, -1]], f.xy_in(FRAME)[[0, -1]], atol=1e-6, rtol=0)
 
+    def test_an_all_bridge_network_is_a_viaduct_over_the_ground(self):
+        # London Bridge station: every track bridge-tagged, no ground part to anchor the network; each track was laid
+        # at its own DEM height (parallel tracks up to 1.5 m apart, clipping). The whole network is one viaduct level.
+        f = features([[(-400.0, 100.0), (100.0, 100.0)], [(100.0, 100.0), (600.0, 100.0)]],
+                     ["standard_gauge"] * 2, subtypes=["rail"] * 2,
+                     flags=[(0, "is_bridge"), (1, "is_bridge")])
+        parts = railways.parts(FRAME, [f], roads.tile_bbox(0, 0), clip=True)
+        self.assertTrue(parts and all(p[2] == "bridge" for p in parts))
+        z = np.concatenate([b for b, _g in railways.profile(parts, flat)])
+        np.testing.assert_allclose(z, 10.0 + railways.VIADUCT_CLEAR_M, atol=1e-6)
+
+    def test_a_bridge_meeting_a_ground_track_keeps_its_own_profile(self):
+        f = features([[(-400.0, 100.0), (100.0, 100.0)], [(100.0, 100.0), (600.0, 100.0)]],
+                     ["standard_gauge"] * 2, subtypes=["rail"] * 2, flags=[(0, "is_bridge")])
+        parts = railways.parts(FRAME, [f], roads.tile_bbox(0, 0), clip=True)
+        z = np.concatenate([b for b, _g in railways.profile(parts, flat)])
+        np.testing.assert_allclose(z, 10.0, atol=1e-6, err_msg="a ground part anchors the bridge: no viaduct raise")
+
+    def test_parallel_bridge_decks_see_each_other(self):
+        f = features([[(-200.0, 100.0), (200.0, 100.0)], [(-200.0, 104.0), (200.0, 104.0)]],
+                     ["standard_gauge"] * 2, subtypes=["rail"] * 2,
+                     flags=[(0, "is_bridge"), (1, "is_bridge")], ids=["a", "b"])
+        parts = railways.parts(FRAME, [f], roads.tile_bbox(0, 0), clip=True)
+        gaps = railways._neighbour_gaps(parts)
+        n = next(i for i, p in enumerate(parts) if p[0] == "a")
+        gl, gr = gaps[n]
+        self.assertAlmostEqual(float(np.median(gl[np.isfinite(gl)])), 4.0, delta=0.02,
+                               msg="the other track on the left")
+        self.assertFalse(np.isfinite(gr).any(), "nothing on the right")
+        m = np.isfinite(gl)
+        np.testing.assert_allclose(gl[m], np.median(gl[m]), atol=0.02)
+
     def test_bridge_profile_agrees_across_adjacent_tiles(self):
         f = features([[(-400.0, 100.0), (100.0, 100.0)],
                       [(100.0, 100.0), (450.0, 100.0)],
@@ -100,20 +141,28 @@ class RailwayTest(unittest.TestCase):
         self.assertGreater(n_sleepers, 256 / railways.SLEEPER_EVERY * 0.95)
         self.assertGreaterEqual(P[:, 0].min(), -roads.OVERLAP - railways.STEP_M - 3.0)
 
-    def test_lean_collider_without_rails_and_sleepers(self):
-        # (PR #41) the collider is the bed alone: most of the track's triangles are its rails and sleepers
+    def test_lean_collider_keeps_the_rails_not_the_sleepers(self):
+        # (PR #41) sleepers are most of the track's triangles; the rails stay colliding (their railheads are what a
+        # train's wheels ride and a car bumps over), so the collider is the bed and the rails, not the sleepers
         f = features([[(-50.0, 100.0), (300.0, 100.0)]], ["standard_gauge"], subtypes=["rail"])
         mesh = railways.tile_mesh(FRAME, 0, 0, [f], flat)
         P, T, UV, mats, M = mesh
         cP, cT, cUV, cmats, cM = railways.collision_mesh(mesh)
-        self.assertTrue({mats[k] for k in np.unique(cM)} <= {railways.BALLAST, railways.CONCRETE})
-        self.assertEqual(len(cT), int(np.isin(M, [mats.index(railways.BALLAST)]).sum()))
-        self.assertLess(len(cT), 0.3 * len(T), "rails and sleepers were most of it")
-        np.testing.assert_array_equal(cT, T[M == mats.index(railways.BALLAST)])
+        got = {mats[k] for k in np.unique(cM)}
+        self.assertTrue(got <= {railways.BALLAST, railways.CONCRETE, railways.STEEL})
+        self.assertIn(railways.STEEL, got, "the rails collide")
+        self.assertNotIn(railways.SLEEPER, got, "the sleepers stay drawn only")
+        self.assertLess(len(cT), 0.5 * len(T), "still lean: no sleepers")
+        bed = railways.collision_mesh(mesh, rails=False)
+        self.assertEqual(len(bed[1]), int(np.isin(M, [mats.index(railways.BALLAST)]).sum()),
+                         "BNGE_RAIL_COLLISION=0: the bed alone")
+        np.testing.assert_array_equal(bed[1], T[M == mats.index(railways.BALLAST)])
         self.assertIs(cP, P)
         self.assertIsNone(railways.collision_mesh(None))
         rails_only = (P, T[M == 2], UV, mats, M[M == 2])
-        self.assertIsNone(railways.collision_mesh(rails_only), "nothing left: no collider")
+        c = railways.collision_mesh(rails_only)
+        self.assertIsNotNone(c, "the rails alone are a collider now")
+        self.assertEqual({mats[k] for k in np.unique(c[4])}, {railways.STEEL})
         with tempfile.TemporaryDirectory() as tmp:      # written by the road tile beside the drawn track
             path, _n = roads.write_tile(tmp, "/v", 1, 0, 0, [], rail_mesh=mesh)
             import json
@@ -137,21 +186,112 @@ class RailwayTest(unittest.TestCase):
         hw = roads.road_specs(f)[1].width / 2
         self.assertFalse(((x > 120 - hw) & (x < 120 + hw)).any(), "nothing on the road")
 
-    def test_short_tunnel_under_a_road_is_track_and_abandoned_lines_are_worn(self):
-        """The line under a road bridge tagged is_tunnel for 12 m (OSM's habit) is track; a long tunnel is left out;
-        an abandoned line beside it is drawn worn (Joensuu, 2026-10-25; the user, 2026-10-27: abandoned lines shown,
-        grown over)."""
+    def test_short_tunnel_under_a_road_is_track_and_a_long_one_is_a_tunnel(self):
+        """The line under a road bridge tagged is_tunnel for 12 m (OSM's habit) is track on the ground; a long tunnel
+        is a part of its own (a bore, M5); an abandoned line beside it is drawn worn (Joensuu, 2026-10-25; the user,
+        2026-10-27: abandoned lines shown, grown over)."""
         f = features([[(0.0, 100.0), (250.0, 100.0)], [(0.0, 110.0), (250.0, 110.0)], [(0.0, 150.0), (250.0, 150.0)]],
                      ["standard_gauge", "unknown", "standard_gauge"], subtypes=["rail"] * 3,
                      flags=[(0, "is_tunnel", 0.46, 0.51), (1, "is_abandoned"), (2, "is_tunnel", 0.2, 0.8)])
         worn = {}
         rails = railways.parts(FRAME, [f], roads.tile_bbox(0, 0), worn=worn)
         got = [(fid, kind, float(np.ptp(xy[:, 0]))) for fid, _c, kind, xy in rails]
-        self.assertEqual(sorted(g[0] for g in got), ["id000", "id001", "id002", "id002"])
+        self.assertEqual(sorted(g[0] for g in got), ["id000", "id001", "id002", "id002", "id002"])
         self.assertEqual(worn, {"id001": 2}, "the abandoned line worn")
         self.assertEqual([c for fid, c, *_ in rails if fid == "id001"], ["standard_gauge"])
         self.assertAlmostEqual([g[2] for g in got if g[0] == "id000"][0], 250.0, 0, "track through the short tunnel")
-        self.assertLess(max(g[2] for g in got if g[0] == "id002"), 60.0, "a long tunnel left out")
+        long_parts = [(k, L) for fid, k, L in got if fid == "id002"]
+        self.assertEqual(sorted(k for k, _L in long_parts), ["ground", "ground", "tunnel"])
+        self.assertAlmostEqual(max(L for k, L in long_parts if k == "tunnel"), 150.0, delta=1.0,
+                               msg="the long tunnel kept as a track of its own")
+
+    def test_a_long_tunnel_is_a_track_in_a_bore(self):
+        """A mapped rail tunnel keeps its track: the bed is the lower hull of the hill (inside it, not over it), a
+        tube is built round it, and the terrain is cut only at its mouths (not over the hill)."""
+        f = features([[(-50.0, 100.0), (300.0, 100.0)]], ["standard_gauge"], subtypes=["rail"],
+                     flags=[(0, "is_tunnel", 0.25, 0.75)])
+
+        def elev(la, lo):
+            e, _n, _ = FRAME.geodetic_to_enu(np.asarray(la, np.float64), np.asarray(lo, np.float64), 0.0)
+            return 10.0 + 30.0 * np.exp(-((np.asarray(e) - 125.0) / 60.0) ** 2)
+        ground = railways.point_ground(FRAME, elev)
+        tube = []
+        mesh = railways.tile_mesh(FRAME, 0, 0, [f], ground, tube_out=tube)
+        self.assertIsNotNone(mesh)
+        self.assertTrue(tube, "a bore is made")
+        self.assertTrue(any(p[0] or p[1] for p in (c["portal"] for c in tube)), "a mouth at a portal")
+        for c in tube:
+            z = np.asarray(c["n"], np.float64)[:, 2]
+            self.assertLess(float(z.max()), 30.0, "the tube's floor is inside the hill, not over it")
+        P, T, UV, mats, M = mesh
+        steel = P[np.unique(T[M == mats.index(railways.STEEL)])]
+        self.assertLess(float(steel[:, 2].max()), 30.0, "the track is inside the hill")
+        import roadmesh
+        bore = roadmesh.tunnel(tube, (0.0, 0.0, 0.0))
+        self.assertIsNotNone(bore, "the tube mesh")
+        # the terrain holes: the mouths, not the ground over the vault
+        n, square, cx, cy = 192, 1.0, 128.0, 128.0
+        gx = cx - n * square / 2 + np.arange(n) * square
+        X, Y = np.meshgrid(gx, gx)
+        U = 10.0 + 30.0 * np.exp(-((X - 125.0) / 60.0) ** 2)
+        keep = {"u": U}
+        mask = railways.block_tunnel_holes(FRAME, [f], keep, cx, cy, square, ground)
+        self.assertIsNotNone(mask)
+        iy = lambda y: int(round(y - (cy - n * square / 2)))     # noqa: E731
+        ix = lambda x: int(round(x - (cx - n * square / 2)))     # noqa: E731
+        self.assertTrue(mask[iy(100.0), ix(37.5)], "the west mouth is cut")
+        self.assertTrue(mask[iy(100.0), ix(212.5)], "the east mouth is cut")
+        self.assertFalse(mask[iy(100.0), ix(125.0)], "the hill over the vault stays")
+        with tempfile.TemporaryDirectory() as tmp:      # the road tile writes the tube beside the track
+            import json
+            path, _n = roads.write_tile(tmp, "/v", 1, 0, 0, [], rail_mesh=mesh, rail_tunnel=bore, rail_tube=tube)
+            with open(os.path.join(tmp, os.path.basename(path))) as fh:
+                data = json.load(fh)
+            self.assertEqual(data["railtunnel"]["shape"], "/v/railtunnel_1_0_0.cdae")
+            self.assertTrue(data.get("sound"), "the tube's sound space")
+
+    def test_an_undersea_tunnel_is_laid_under_the_seabed(self):
+        """The Channel: the bed is TUNNEL_DEPTH_M under the water-covered ground, faded in from the coasts; the hull of
+        dry ground stays at the ground."""
+        xy = np.c_[np.arange(0.0, 12001.0, 2.0), np.full(6001, 0.0)]
+        seabed = np.full(len(xy), -30.0)
+        dry = railways._tunnel_floor(xy, seabed)
+        self.assertAlmostEqual(float(dry[3000]), -30.0, delta=0.1)
+        wet = np.ones(len(xy), bool)
+        deep = railways._tunnel_floor(xy, seabed, wet)
+        self.assertAlmostEqual(float(deep[3000]), -30.0 - railways.TUNNEL_DEPTH_M, delta=0.5)
+        self.assertGreater(float(deep[0]), float(deep[3000]), "eased in at the coast, no step")
+        ramp = np.diff(deep) / np.diff(xy[:, 0])
+        self.assertLessEqual(float(np.abs(ramp).max()), 0.02, "at a main line's grade")
+
+    def test_osm_tunnel_tag_makes_a_tunnel_without_an_overture_flag(self):
+        """The rail shard's tunnel=yes (the Channel Tunnel, the Overground dives) where Overture has no range."""
+        f = features([[(0.0, 100.0), (300.0, 100.0)]], ["standard_gauge"], subtypes=["rail"])
+        f.attrs["osm_tunnel"] = np.array(["yes"], object)
+        self.assertEqual([k for _f, _c, k, _xy in railways.parts(FRAME, [f], roads.tile_bbox(0, 0))], ["tunnel"])
+
+    def test_a_subway_is_a_deep_bore_without_a_tunnel_flag(self):
+        """railway=subway has no surface expression in Overture: it is a tunnel its whole length, SUBWAY_DEPTH_M under
+        the street when the line is long (the Underground; the user's example)."""
+        f = features([[(0.0, 100.0), (2000.0, 100.0)]], ["standard_gauge"], subtypes=["rail"])
+        f.attrs["osm_railway"] = np.array(["subway"])
+        rails = railways.parts(FRAME, [f], (0.0, 0.0, 256.0, 256.0))
+        self.assertEqual([k for _f, _c, k, _xy in rails], ["tunnel"])
+        self.assertEqual({c for _f, c, _k, _xy in rails}, {"subway"})
+        xy = np.c_[np.arange(0.0, 2001.0, 2.0), np.full(1001, 100.0)]
+        floor = railways._tunnel_floor(xy, np.full(len(xy), 10.0), depth=railways.SUBWAY_DEPTH_M,
+                                      ramp=railways.SUBWAY_RAMP_M)
+        self.assertAlmostEqual(float(floor[500]), 10.0 - railways.SUBWAY_DEPTH_M, delta=0.5, msg="under the street")
+        self.assertGreater(float(floor[0]), float(floor[500]), "rising to its end")
+
+    def test_a_joint_between_tunnel_parts_is_not_a_portal(self):
+        """Overture splits a long tunnel at a junction: the two parts' meeting ends are a joint inside the hill, not
+        two mouths with a portal face and a hole."""
+        xy = np.c_[np.arange(0.0, 102.0, 2.0), np.zeros(51)]
+        rails = [("a", "standard_gauge", "tunnel", xy[:26]), ("b", "standard_gauge", "tunnel", xy[25:])]
+        ports = railways._tunnel_portals(rails)
+        self.assertEqual(ports[0], (True, False))
+        self.assertEqual(ports[1], (False, True))
 
     def test_level_crossing_rails_meet_the_road_on_gentle_ramps(self):
         """The rails' top is flush with the road where the track crosses it (they stood 0.6 m over it at its edge), and

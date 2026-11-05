@@ -50,8 +50,10 @@ class TramBridgeTest(unittest.TestCase):
                 self.assertAlmostEqual(float(steel[:, 2].max()), 50.0 + railways.FLUSH_LIFT_M + 0.005, places=5)
                 col = railways.collision_mesh(mesh)
                 self.assertIsNotNone(col)
-                self.assertEqual({col[3][int(i)] for i in np.unique(col[4])}, {railways.CONCRETE})
-                np.testing.assert_array_equal(col[1], t[m == mats.index(railways.CONCRETE)])
+                self.assertTrue({col[3][int(i)] for i in np.unique(col[4])} <= {railways.CONCRETE, railways.STEEL},
+                                "the slab and its flush rails (no sleepers, no ballast)")
+                self.assertEqual(int(np.isin(col[4], mats.index(railways.CONCRETE)).sum()),
+                                 int((m == mats.index(railways.CONCRETE)).sum()), "the whole slab collides")
                 self.assertEqual(railways.grade_plans(frame, [f], roads.tile_bbox(0, 0),
                                                      lambda la, lo: np.full(np.shape(la), 50.0)), [])
 
@@ -61,7 +63,8 @@ class TramBridgeTest(unittest.TestCase):
                      flags=[(0, "is_bridge", 0.4, 0.6), (1, "is_tunnel")],
                      levels=[(0, 1, 0.4, 0.6), (1, -3)])
         parts = railways.parts(FRAME, [f], roads.tile_bbox(0, 0))
-        self.assertEqual([(c, kind) for _fid, c, kind, _xy in parts], [("tram", "bridge")])
+        self.assertEqual([(c, kind) for _fid, c, kind, _xy in parts],
+                         [("tram", "bridge"), ("subway", "tunnel")], "the tram's bridge and the metro's bore")
         self.assertIsNone(railways.drawn(f, 0), "a tram is not a ballasted mainline")
         self.assertIsNone(gradesep._kind_half(f, 0), "no inferred road underpasses from surface tram crossings")
         self.assertIsNone(gradesep._kind_half(f, 1), "the metro cannot infer a surface bridge")
@@ -82,8 +85,11 @@ class TramBridgeTest(unittest.TestCase):
         f = features([[(-60, 80), (320, 80)], [(100, 40), (100, 120)], [(140, 40), (140, 120)]],
                      ["tram", "subway", "primary"], subtypes=["rail", "rail", "road"],
                      flags=[(1, "is_tunnel"), (2, "is_tunnel")], levels=[(1, -3), (2, -1)])
-        self.assertEqual(railways.parts(FRAME, [f], roads.tile_bbox(0, 0)), [])
-        self.assertIsNone(railways.tile_mesh(FRAME, 0, 0, [f], lambda xy: np.full(len(xy), 10.0)))
+        got = railways.parts(FRAME, [f], roads.tile_bbox(0, 0))
+        self.assertEqual([(c, kind) for _fid, c, kind, _xy in got], [("subway", "tunnel")],
+                         "the metro is a bore now; the untagged tram stays street track")
+        self.assertIsNotNone(railways.tile_mesh(FRAME, 0, 0, [f], lambda xy: np.full(len(xy), 10.0)),
+                             "the metro's bore has its track")
         self.assertEqual(railways.grade_plans(FRAME, [f], roads.tile_bbox(0, 0),
                                              lambda la, lo: np.full(np.shape(la), 10.0)), [])
         self.assertTrue(rails.tile_chunks(FRAME, 0, 0, [f]), "mapped surface tram remains street track")
@@ -92,8 +98,9 @@ class TramBridgeTest(unittest.TestCase):
         # Source priority must remain intact when bridge consumers admit trams.
         f = features([[(0, 80), (250, 80)]], ["tram"], subtypes=["rail"], flags=[(0, "is_bridge")])
         f.attrs["osm_railway"] = np.array(["subway"], object)
-        self.assertIsNone(railways.drawn(f, 0, bridges=True))
-        self.assertIsNone(railways.tile_mesh(FRAME, 0, 0, [f], lambda xy: np.full(len(xy), 10.0)))
+        self.assertEqual(railways.drawn(f, 0, bridges=True), ("subway", 0), "OSM's subway wins over the tram class")
+        self.assertIsNotNone(railways.tile_mesh(FRAME, 0, 0, [f], lambda xy: np.full(len(xy), 10.0)),
+                             "the mapped bridge is drawn as a subway bridge")
 
 
 if __name__ == "__main__":

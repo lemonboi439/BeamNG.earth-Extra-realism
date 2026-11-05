@@ -36,7 +36,7 @@ import staging
 
 log = logging.getLogger("earthd.vegetation")
 
-VERSION = 23          # (the cached cells hold their groups: 14 for the regional rules of GitHub #110; 16: the roads'
+VERSION = 24          # 24: building parts (roof overhangs, balconies) masked too; 23: (the cached cells hold their groups: 14 for the regional rules of GitHub #110; 16: the roads'
                       # drawn widths and sidewalks kept clear; 17: BC's lidar canopy heights, mapdata's canopy layer 2;
                       # 18: the rounded junction corners kept clear, roadcorners.py; 19: one tree per flat crown,
                       # thin_tops; 20: none on or beside a bridge deck, _mask_decks; 21: orchard rows, canopy trees
@@ -51,7 +51,7 @@ GROUPS = ("deciduous", "conifer", "shrub", "rock", "pine_west", "palm", "juniper
 (G_DECIDUOUS, G_CONIFER, G_SHRUB, G_ROCK, G_PINE_WEST, G_PALM, G_JUNIPER, G_DESERT_SHRUB, G_DESERT_ROCK,
  G_OAK_WEST, G_TROPICAL) = range(len(GROUPS))
 ROAD_CLEAR_M = 1.5          # trees kept this far off a road's edge (its width by class below)
-TREE_PIT_M = 0.4            # m past a road's edge (+ the push's 0.6) where a top over the road lands: a sidewalk's
+TREE_PIT_M = 0.3            # m past a road's edge (+ the push's 0.6) where a top over the road lands: a sidewalk's
                             # tree pit by the curb (pushed out of the full corridor, Boston Street's trees landed on the
                             # row houses at the back of the sidewalk and all went; Mapillary: one every ~8 m, 2026-10-17)
 PATH_CLASSES = {"footway", "path", "steps", "cycleway", "bridleway", "pedestrian"}   # no corridor: street trees
@@ -283,7 +283,7 @@ class Vegetation:
 
     def _build(self, x, y):
         key = (mapcells.ZOOM, x, y)
-        cd = self.md.cell(key, layers=("canopy", "landcover", "buildings", "roads", "water"))
+        cd = self.md.cell(key, layers=("canopy", "landcover", "buildings", "building_parts", "roads", "water"))
         chm = cd.layers.get("canopy")
         lc = cd.layers.get("landcover")
         if chm is None:
@@ -312,11 +312,14 @@ class Vegetation:
             for dx in (-1, 0, 1):
                 kk = (mapcells.ZOOM, x + dx, y + dy)
                 try:
-                    c2 = cd if (dx, dy) == (0, 0) else self.md.cell(kk, layers=("buildings", "roads", "water"))
+                    c2 = cd if (dx, dy) == (0, 0) else self.md.cell(kk, layers=("buildings", "building_parts",
+                                                                                "roads", "water"))
                 except Exception as e:          # a neighbour not at hand: its features unmasked
                     log.debug("vegetation: neighbour %s: %s", kk, e)
                     continue
                 _mask_polys(c2.layers.get("buildings"), blocked, chm, 1.0)
+                # roof overhangs, balconies and canopies are building parts; the CHM sees their tops too
+                _mask_polys(c2.layers.get("building_parts"), blocked, chm, 0.5)
                 _mask_polys(c2.layers.get("water"), blocked, chm, 0.0, kind=3)
                 _mask_roads(c2.layers.get("roads"), road, chm, specs=self._specs, walks=True)
                 _mask_roads(c2.layers.get("roads"), curb, chm, push, clear=TREE_PIT_M, specs=self._specs)

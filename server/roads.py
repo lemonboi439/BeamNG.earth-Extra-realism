@@ -106,6 +106,9 @@ LOOK = {
 # a `surface=concrete` street is still a paved one (markings, widths, the tyres' asphalt feel) but is drawn with
 # gridmap v2's plain concrete instead of asphalt (the user, 2026-10-22: "for concrete road surfaces")
 CONCRETE = {"m": "m_gm_concrete_plain", "tl": 11.0, "p": 20}
+ASPHALT_TEX_W = 8.0     # m the stock road_asphalt_2lane decal is drawn across (West Coast USA: 385 uses at 8 m, the
+                        # texture is square): a paved lane samples that much of the texture across it, not a stretched
+                        # copy of the whole width (docs/research/2026-10-11-official-road-study.md §1)
 # Dirt and gravel strips (from PR #455 by AnthonyGraceffa): with the carriageways in the ground (ROADS_IN_GROUND) a dirt
 # or gravel road still gets a mesh of BeamNG's continuous rutted road strip over the ground photo's tint and its
 # terrain layer (surface.PHOTO_ROAD_RGBA, paint_roads), fading into the ground at its sides and open ends (roadmesh
@@ -178,6 +181,8 @@ ONEWAY_STYLE = {"primary": 6.5, "secondary": 6.5, "tertiary": 4.0, "residential"
 # real streets have concrete sidewalks behind a curb and a double yellow centre line). Stock West
 # Coast USA materials. renderPriority: lower draws on top (WCUSA: lines 2-6, the asphalt strip 20).
 SIDEWALK = {"m": "sidewalk_concrete", "tl": 6.0, "p": 16, "w": 2.5}      # beyond the carriageway, city streets
+WALK_DEFAULT_M = {"residential": 2.0, "living_street": 1.8, "unclassified": 2.0}   # a housing estate's footway
+# is 1.8-2 m: the 2.5 m city default read as a concrete platform beside Page's Walk (Guinness Square, 2026-11-04)
 # Storm drain inlets: a metal grate in the gutter (Driver Training's m_metal_grid_drain), DRAIN_IN m
 # before the real end of each sidewalk run (one per corner, where real inlets sit) and every
 # DRAIN_EVERY m along long runs (each is a DecalRoad: kept to ~40 per city tile)
@@ -195,7 +200,16 @@ EDGE_DECAL_AT = 0.95
 LADDER_LINE_W = 0.30            # a ladder crosswalk's side lines (MUTCD 3C.04: 6-24 in)
 EDGE_DECAL_GAP_M = 1.5          # ... none where another carriageway's edge is this near past the decal (gores, medians)
 MEASURE_SKIP = {"service"}      # classes not measured between buildings (lots, alleys: far walls)
-MEASURE_MAX = 3.0               # a measured carriageway at most this times the class default
+MEASURE_MAX = 3.0               # a measured carriageway at most this times the class default ...
+MEASURE_CAP_M = {"residential": 8.0, "living_street": 7.5, "unclassified": 8.5, "tertiary": 9.5,
+                 "secondary": 13.0, "primary": 16.0, "trunk": 18.0}   # ... and this absolute cap for the minor
+                                # classes: the ray hits the house across its front garden, so a 20 m crescent read as a
+                                # 12 m carriageway (Wickenden Crescent, 2026-11-04); beyond the cap the class default
+                                # is closer to the real street
+WALK_CAP_M = {"residential": 2.2, "living_street": 2.0, "unclassified": 2.2, "tertiary": 2.6,
+              "secondary": 3.0, "primary": 3.2}     # m: a measured footway's widest (roadwidth.split's WALK_MAX
+                                # 4.5 is 20 % of a wide right-of-way: estate frontages made 3-4 m concrete slabs
+                                # beside a 2 m path, Guinness Square, 2026-11-04)
 SIDEWALK_CLASSES = {"residential", "tertiary", "secondary", "primary", "unclassified", "living_street"}
 CENTRE_CLASSES = {"primary", "secondary", "tertiary", "trunk"}
 EDGE_LINE_CLASSES = {"primary", "secondary", "tertiary", "trunk", "motorway"}
@@ -212,6 +226,9 @@ LANE_M = 3.3            # m per lane when counting the lanes a carriageway holds
 # that we are applying a floating road texture over the normal terrain"; it also ended the white diamonds on the
 # Stelvio's hairpins, GitHub #135). BNGE_ROADS_IN_GROUND=0: the carriageway meshes as before
 ROADS_IN_GROUND = os.environ.get("BNGE_ROADS_IN_GROUND", "1") != "0"
+# ... but draw the paved carriageways as meshes anyway in detail mode, where the near ground is a drawn photo and a
+# flat painted band reads as cardboard (blockworker.init sets it per run; the paint stays under the mesh)
+ROAD_SURFACE = False
 # m per driving lane by class when OpenStreetMap gives the lane count (osmtags.py; typical design widths)
 LANE_W = {"motorway": 3.6, "trunk": 3.5, "primary": 3.3, "secondary": 3.3, "tertiary": 3.1}
 LANE_W_DEFAULT = 3.0
@@ -239,11 +256,11 @@ DASH_MIN_M = 0.3                # ... but a broken line's dash is kept down to t
 WALK_STEP_M = 1.0               # m the ground under a sidewalk may lie off the road's level: further, a cutting's wall or
                                 # a drop is there and the sidewalk stops (it was draped up a wall, Munich's McGraw-Graben)
 NEAR_M = 40.0                   # roads this far outside the tile still cut its sidewalks / lines
-# Carriageway = driving width + parking lanes on city streets or paved edge strips on rural roads
-# (docs/research/2026-10-11-official-road-study.md §2: rural paved surface = AI width + 2-2.5 m;
-# West Coast USA's plain streets 12.5 m for 8 m of driving: ~2.3 m of parking each side). A width
-# rule, where Overture has one, is the carriageway already.
-PARKING_M = 2.3
+# Carriageway = driving width + paved edge strips on rural roads (docs/research/2026-10-11-official-road-study.md §2:
+# rural paved surface = AI width + 2-2.5 m; West Coast USA's plain streets 12.5 m for 8 m of driving: ~2.3 m of parking
+# each side). A width rule, where Overture has one, is the carriageway already. Urban parking lanes are NOT added from
+# the class: a street with no mapped width or lane count was drawn 4.6 m too wide (a UK crescent of 5-6 m as 10.6 m,
+# 2026-11-04), and the map's own width includes its parking where there is any.
 # Rural motorways: two lanes a direction (most rural Interstates and European motorways; every US Interstate was drawn
 # with three, GitHub #43) between paved shoulders, the edge line along each. Untagged urban highways also get two.
 # Overture has no lane counts.
@@ -251,7 +268,6 @@ MOTORWAY_RURAL_M = 7.4
 SHOULDER_M = 2.2
 SHOULDER_WIDE_M = 3.0     # m: a motorway carriageway of SHOULDER_WIDE_LANES lanes or more (US interstates: 10 ft both
 SHOULDER_WIDE_LANES = 3   # sides from three lanes; I-95 by the Middle Branch, the aerial vs ours, the user 2026-10-31)
-PARKING_CLASSES = {"residential", "tertiary", "secondary", "unclassified", "living_street"}
 EDGE_STRIP_M = 1.0
 # ... by class where measured narrower: rural minor roads' paved width on the official aerials (PEMA 6-inch, Lancaster
 # County PA, 20 tertiary 6.4 m and 20 secondary 6.7 m against 8.5 and 9.5 drawn; NAIP, El Paso County CO, tertiary 7.2;
@@ -445,7 +461,9 @@ def _facts_load(feats, kind, extra):
 # (bakepack.py), in place of the code hash; the plans' key holds it too (plancache.plans_format). Bump it whenever a
 # change makes other facts (level ranges, specs, lane flow, grade separations or their inputs' rules), or players keep
 # the old ones; tests/test_bake_formats.py fails until it is bumped.
-FACTS_FORMAT = 3      # 3: PR #471 lane counts (validated highway counts, two-lane highway default) and #686 (Swedish dual carriageways, 2.75 m lanes); 2: OSM's own surface first, "unpaved" on car roads gravel, regional gravel for untagged minor roads
+FACTS_FORMAT = 5      # 5: PR #471 lane counts and #686 Swedish lanes merged with the estate footways, no invented
+                      # parking, the measured-width caps and the mapped-only residential sidewalks (4); 3: PR #471
+                      # lane counts; 2: OSM's own surface first, "unpaved" on car roads gravel, regional gravel
 
 
 def _facts_baked(feats, kind, extra):
@@ -1687,8 +1705,6 @@ def carriageway(cls, kind, urban, rule_width=None, oneway=False, lanes=None):
         return w + 2 * (SHOULDER_WIDE_M if lanes >= SHOULDER_WIDE_LANES else SHOULDER_M)
     if urban and not oneway and cls in URBAN_ARTERIAL and not lanes:
         return URBAN_ARTERIAL[cls]          # four lanes, no parking (a walled street is measured instead)
-    if urban and cls in PARKING_CLASSES:
-        return w + (1 if oneway else 2) * PARKING_M
     if not urban and cls != "service":
         if oneway and cls == "motorway":
             return MOTORWAY_RURAL_M + 2 * SHOULDER_M
@@ -2562,7 +2578,8 @@ def _road_specs(feats, urban_fn, left_hand):
                 continue
         if len(out) in regional:        # (no land cover to tell town from country: rural)
             kind = "gravel"
-        out.append(Spec(carriageway(cls, kind, False, rule_w, ow, lanes), kind, False, cls, ow, 2.5, *dk,
+        out.append(Spec(carriageway(cls, kind, False, rule_w, ow, lanes), kind, False, cls, ow,
+                        WALK_DEFAULT_M.get(cls, SIDEWALK["w"]), *dk,
                         lanes=lanes, surf=surface_token(surf), link=link))
     if ask:
         ll = np.concatenate([samples for _, _, _, samples, *_ in ask])
@@ -2582,7 +2599,8 @@ def _road_specs(feats, urban_fn, left_hand):
             k += count
             if j in regional and not urban:
                 kind = "gravel"
-            out[j] = Spec(carriageway(cls, kind, urban, rule_w, ow, lanes), kind, urban, cls, ow, 2.5, *dk, lanes=lanes,
+            out[j] = Spec(carriageway(cls, kind, urban, rule_w, ow, lanes), kind, urban, cls, ow,
+                          WALK_DEFAULT_M.get(cls, SIDEWALK["w"]), *dk, lanes=lanes,
                           surf=token, link=link)
     out = _swedish_specs(feats, out)
     out = _rings(feats, out)
@@ -2840,8 +2858,15 @@ def _measured_widths(feats, specs, widths):
         # Historic streets can be one shared lane between close building fronts. Rejecting these measurements
         # kept a default carriageway wider than the street itself.
         minimum = 3.0 if sp.cls in {"residential", "living_street", "unclassified", "tertiary"} else 0.6 * dflt
-        if m is not None and minimum <= m[0] <= MEASURE_MAX * dflt:
-            out[j] = sp._replace(width=m[0], walk=m[1])
+        cap = MEASURE_CAP_M.get(sp.cls, MEASURE_MAX * dflt)
+        if m is not None and minimum <= m[0] <= cap:
+            # (a walled street's measured sidewalk: the map's sides, where it has them, stay)
+            measured_sides = (1, -1) if m[1] >= 0.5 else ()
+            walk = min(float(m[1]), WALK_CAP_M.get(sp.cls, SIDEWALK["w"]))
+            out[j] = sp._replace(width=m[0], walk=walk,
+                                 sides=sp.sides if getattr(sp, "sides", None) is not None else measured_sides)
+        elif getattr(sp, "sides", None) is None and sp.cls in ("residential", "living_street", "unclassified"):
+            out[j] = sp._replace(sides=())     # (front gardens / open frontage: no invented sidewalk)
     return out
 
 
@@ -4393,6 +4418,11 @@ TUNNEL_STEP = 4.0       # m between tunnel profile points
 TUNNEL_WET_SHARE = 0.25 # a tunnel part with more of its points under water is left out (TunnelProfiles.wet)
 TUNNEL_WET_COVER_M = 60.0   # m: water this far over the chain's lower portal is no underwater tunnel's (_mark_drowned)
 TUNNEL_WET_RUN_M = 20.0 # ... and a tunnel chain passing under water this far away from its ends (_mark_drowned)
+TUNNEL_WET_MIN_LEN_M = 1200.0   # m: an underwater chain shorter than this is a city river crossing (Rotherhithe,
+                                # 1.48 km) and is built as a tube; longer ones stay excluded (a car in a long
+                                # submerged tube floats: the Burnley 3.2 km)
+TUNNEL_WET_DEPTH_M = 10.0   # m under the water-covered ground a short river tunnel's floor is laid, clear of the bed
+TUNNEL_WET_EASE_M = 120.0   # m over which that depth is eased in from its portals
 TUNNEL_OPEN_COVER = 4.0 # m: a 'tunnel' whose ground nowhere rises this far over the straight line between its portals
                         # is an underpass in the open (under a bridge the map does not draw as a deck over it): a road
                         # on the ground, no tube, portals or holes (Central Park's 86th Street Transverse under its
@@ -4631,8 +4661,10 @@ def has_sidewalks(spec):
     # a two-way urban trunk is a town's main street on a state highway (Bishop's US-395, Moab's US-191);
     # divided trunks are one-way per carriageway: expressways get none, slow ones (Ocean City's Coastal
     # Highway, 35 mph, 2026-10-14 street photos) one on their outer side (walk_sides)
-    if getattr(spec, "sides", None) is not None:      # the map says (_osm_sidewalks)
+    if getattr(spec, "sides", None) is not None:      # the map says (_osm_sidewalks), or a walled measurement did
         return spec.kind in BUILT and bool(spec.sides)
+    if spec.cls in ("residential", "living_street", "unclassified"):
+        return False    # (no sidewalk tag and no walled frontage: a grass verge, front gardens; the US's are tagged)
     if spec.oneway and spec.kmh is not None and spec.kmh >= NO_WALK_KMH:
         return False
     return spec.kind in BUILT and spec.urban and not limited_access(spec) and (
@@ -4791,9 +4823,8 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None, ws=None, shi
             if side is not None:
                 look["side"] = side
             out.append((look, width, piece))
-    # the driving width (a town street's parking lanes and a rural road's edge strips left out: three lanes on every
-    # rural Interstate, GitHub #43) and its lanes (OpenStreetMap's count where known)
-    parked = urban and spec.parking and cls in PARKING_CLASSES and not (not spec.oneway and cls in URBAN_ARTERIAL)
+    # the driving width (a rural road's edge strips left out: three lanes on every rural Interstate, GitHub #43) and
+    # its lanes (OpenStreetMap's count where known)
     drive, lanes = lane_layout(spec)
     # (tapered: the lanes' lines spread with the driving width)
     scale = 1.0 if ws is None else np.maximum(drive + (wv - w), 0.5) / max(drive, 0.5)
@@ -4801,7 +4832,7 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None, ws=None, shi
         osm = {**(osm or {}), "lanes": lanes}    # keep odd mapped totals in the paint as well as the AI
     plan = markings.lane_plan(osm, not spec.oneway, drive, lanes, left_hand) \
         if kind == "paved" and (cls in CENTRE_CLASSES or cls in LANE_CLASSES) else None
-    if plan is not None and not spec.oneway and w - (2 * PARKING_M if parked else 0.0) < st.min_centre_m:
+    if plan is not None and not spec.oneway and w < st.min_centre_m:
         plan = None                     # (the map's lanes do not widen it: as the count's, too narrow a road has none)
     if plan is not None:
         # the map's lanes: each line where its lanes meet (OpenStreetMap lanes:forward / backward / both_ways,
@@ -4836,8 +4867,8 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None, ws=None, shi
             else:
                 mark("centre", st.centre, lw_, at(off), cpat)
     if plan is None and kind == "paved" and cls in CENTRE_CLASSES \
-            and w - (2 * PARKING_M if parked else 0.0) >= st.min_centre_m \
-            and not spec.oneway and not getattr(spec, "mountain", False):     # (a pass road: none, _mountain_roads)   # no paint on cobbles (the width between the parking lanes, edge strips included)
+            and w >= st.min_centre_m \
+            and not spec.oneway and not getattr(spec, "mountain", False):     # (a pass road: none, _mountain_roads)
         # the centre line (MUTCD 3B.01-02, TSRGD / RMS / IISR centre lines): too narrow a road has none; four lanes or
         # more get a solid line (the Americas: double solid yellow), and in the US a town's street a double solid one;
         # otherwise one broken line in the country's colour and town / country pattern
@@ -4849,7 +4880,7 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None, ws=None, shi
             mark("centre", st.centre, lw_, pts.copy())
         else:
             mark("centre", st.centre, lw_, pts.copy(), st.centre_urban if urban else st.centre_rural)
-    if plan is None and kind == "paved" and cls in LANE_CLASSES:
+    if plan is None and kind == "paved" and (cls in LANE_CLASSES or spec.lanes):
         # lane lines between the lanes of one direction, broken in the country's pattern
         pat = st.lane_motorway if motorway else (st.lane_urban if urban else st.lane_rural)
         if spec.oneway and lanes >= 2:
@@ -4919,9 +4950,8 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None, ws=None, shi
                 out.append((look, CENTRE["w"], offset_polyline(pts, side * CENTRE["gap"])))
     if kind == "paved" and cls in LANE_CLASSES:
         # lane lines (white dashes) where the driving width holds two or more lanes a direction
-        parked = urban and cls in PARKING_CLASSES and not (not spec.oneway and cls in URBAN_ARTERIAL)
         # (a rural road's edge strips counted as lanes: three on every rural Interstate, GitHub #43)
-        drive = w - ((PARKING_M if spec.oneway else 2 * PARKING_M) if parked else 2 * edge_margin(spec))
+        drive = w - 2 * edge_margin(spec)
         lanes = spec.lanes if spec.lanes else int(drive // LANE_M)      # (OpenStreetMap's count where known)
         if spec.oneway and lanes >= 2:
             lw = drive / lanes
@@ -5331,16 +5361,35 @@ COVER_MARGIN_M = 30.0   # m past the tile: the ground carriageways a deck's para
 
 def lane_layout(spec):
     """(driving width m, lanes) of a road as its lane lines are painted (extras) and the AI drives it (navgraph): the
-    carriageway less a town street's parking lanes or a rural road's edge strips (counted as lanes, every rural
-    Interstate had three, GitHub #43), its lanes OpenStreetMap's count or as many LANE_M as fit (at least 1). Pure."""
-    w, cls = spec.width, spec.cls
-    parked = spec.urban and spec.parking and cls in PARKING_CLASSES and not (not spec.oneway and cls in URBAN_ARTERIAL)
-    drive = w - ((PARKING_M if spec.oneway else 2 * PARKING_M) if parked else 2 * edge_margin(spec))
+    carriageway less a rural road's edge strips (counted as lanes, every rural Interstate had three, GitHub #43), its
+    lanes OpenStreetMap's count or as many LANE_M as fit (at least 1). No parking lanes are invented (2026-11-04). Pure."""
+    w = spec.width
+    drive = w - 2 * edge_margin(spec)
     lanes = int(spec.lanes) if spec.lanes else int(drive // LANE_M)
     import markings
     if lanes > 1 and w / lanes < markings.MIN_LANE_M:   # (a count the road has no room for: a tag, or a way of a stretch)
         lanes = int(w // markings.MIN_LANE_M)
     return drive, max(1, lanes)
+
+
+def lane_strips(spec):
+    """[(offset m, width m, u0)] across a paved carriageway, left to right: its edge strips, then each
+    driving lane (lane_layout). u0: the texture coordinate of the strip's left edge, ASPHALT_TEX_W of the stock 2-lane
+    decal across: the asphalt keeps its scale, and the decal's wear pattern runs on across the lanes instead of the
+    whole texture being stretched over any width. Pure."""
+    w = float(spec.width)
+    drive, lanes = lane_layout(spec)
+    margin = max(0.0, (w - drive) / 2.0)
+    lw = drive / max(lanes, 1)
+    out = []
+    if margin > 0.05:
+        out.append((-w / 2 + margin / 2, margin, 0.0))
+    for k in range(lanes):
+        off = -drive / 2 + (k + 0.5) * lw
+        out.append((off, lw, (off - lw / 2 + w / 2) / ASPHALT_TEX_W))
+    if margin > 0.05:
+        out.append((w / 2 - margin / 2, margin, (w - margin) / ASPHALT_TEX_W))
+    return out
 
 
 def lane_tags(feats, i):
@@ -6448,6 +6497,10 @@ class TunnelProfiles(BridgeProfiles):
         bank was built, an open trench across the avenue with its mouth at the river; GitHub #128)."""
         if self.wet is None:
             return
+        total = sum(float(np.hypot(*np.diff(np.asarray(pool[k][1], np.float64)[:, :2], axis=0).T).sum())
+                    for k in comp if len(pool[k][1]) >= 2)
+        if total < TUNNEL_WET_MIN_LEN_M:
+            return                      # (a city river crossing: built as a tube, the floor laid under the water)
         wet = False
         gfn = self._raw_ground if self.raw is not None else self._ground
         low = None                      # (the lowest ground at the parts' ends: the lower portal's)
@@ -6530,6 +6583,19 @@ class TunnelProfiles(BridgeProfiles):
             g = g.copy()
             g[0], g[-1] = ge[0], ge[-1]
             floor, kinds = tunnel_sections(s, g)
+            if self.wet is not None and s[-1] < TUNNEL_WET_MIN_LEN_M:
+                # a short river crossing (Rotherhithe): its floor laid TUNNEL_WET_DEPTH_M under the water-covered
+                # ground, eased in from the portals (the ground over the vault stays)
+                la, lo, _ = self.frame.enu_to_geodetic(xy[:, 0], xy[:, 1], 0.0)
+                wet = np.asarray(self.wet(la, lo), np.float64) > 0.5
+                if wet.any():
+                    ease = np.minimum(np.clip(s / TUNNEL_WET_EASE_M, 0.0, 1.0),
+                                      np.clip((s[-1] - s) / TUNNEL_WET_EASE_M, 0.0, 1.0))
+                    floor = floor - TUNNEL_WET_DEPTH_M * wet * ease
+                    # the sections from the lowered floor (tunnel_sections read the hull before it)
+                    cover = g - floor
+                    kinds = np.where(cover >= TUNNEL_COVER, 2,
+                                     np.where(cover >= TUNNEL_OPEN_COVER, 1, 0)).astype(np.int64)
             kinds = portal_cover(kinds, g - floor, pool[k][0])
             kinds = self._cover_roads(xy, s, kinds, ground)
             secs, i = [], 0
@@ -6798,7 +6864,8 @@ class TunnelProfiles(BridgeProfiles):
             la, lo, _ = self.frame.enu_to_geodetic(xy[:, 0], xy[:, 1], 0.0)
             # under water for a good part of it (a portal on a river bank, Fort Pitt's east end 0.6 m "in" the
             # Monongahela, is not: that dropped one of its two tubes, 2026-10-17)
-            if (np.asarray(self.wet(la, lo)) > 0.5).mean() <= TUNNEL_WET_SHARE:
+            length = float(np.hypot(*np.diff(xy[:, :2], axis=0).T).sum()) if len(xy) >= 2 else 0.0
+            if (np.asarray(self.wet(la, lo)) > 0.5).mean() <= TUNNEL_WET_SHARE or length < TUNNEL_WET_MIN_LEN_M:
                 keep.append(p)
         return keep
 
@@ -8818,8 +8885,9 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
     strip_ends = _strip_open_ends(roads, rings, seen, near, rough) if DIRT_STRIPS else {}
     for k_road, (fid, spec, pts, _) in enumerate(roads):
         # the carriageway painted into the ground (surface.photo_roads); a dirt or gravel road's strip over it
-        # (DIRT_LOOK)
-        if ROADS_IN_GROUND and not (DIRT_STRIPS and spec.kind in DIRT_LOOK):
+        # (DIRT_LOOK); in detail mode a paved one as lane-accurate meshes over the drawn photo (ROAD_SURFACE)
+        if ROADS_IN_GROUND and not (DIRT_STRIPS and spec.kind in DIRT_LOOK) \
+                and not (ROAD_SURFACE and spec.kind == "paved"):
             continue
         if rough(spec):
             continue
@@ -8827,17 +8895,23 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
         if look.get("aspect"):                  # (a strip: whole, its distance along the road, its open ends)
             chunks.extend(_surface_pieces(look, spec.width, pts, box, strip_ends.get(k_road, (True, True))))
             continue
-        lanes = [(0.0, spec.width)]
+        lanes = [(0.0, spec.width, None)]
         if look.get("strip"):                   # parallel strips across the width (see LOOK)
             n = max(1, int(round(spec.width / look["strip"])))
             sw = spec.width / n
-            lanes = [((k + 0.5) * sw - spec.width / 2, sw) for k in range(n)]
-        for off, lw in lanes:
+            lanes = [((k + 0.5) * sw - spec.width / 2, sw, None) for k in range(n)]
+        elif spec.kind == "paved":
+            lanes = lane_strips(spec)           # one chunk a lane: the asphalt keeps its scale (ASPHALT_TEX_W)
+        for off, lw, u0 in lanes:
             line = pts if off == 0.0 else offset_polyline(pts, off)
             for piece in clip_polyline(line, *box):
                 for c in split(densify(simplify(piece))):
                     if len(c) >= 2:
-                        chunks.append(_chunk(look, lw, c))
+                        ch = _chunk(look, lw, c)
+                        if u0 is not None:
+                            ch["tu"] = round(lw / ASPHALT_TEX_W, 4)
+                            ch["u0"] = round(u0, 4)
+                        chunks.append(ch)
     decks_near = []                             # (retaining_walls: none under a bridge)
     traffic_decks = []                          # genuine bridge geometry only, never the tunnel vaults below
     deck_walk = {}                              # the bridges that carry sidewalks (deck_walks)
@@ -9671,7 +9745,8 @@ def shape_files(aid, tx, ty):
            "bldcol": f"bldcol_{aid}_{tx}_{ty}.cdae", "wire": f"wire_{aid}_{tx}_{ty}.cdae",
            "bld": f"bld_{aid}_{tx}_{ty}.cdae", "tunnel": f"tunnel_{aid}_{tx}_{ty}.cdae",
            "rail": f"rail_{aid}_{tx}_{ty}.cdae", "railcol": f"railcol_{aid}_{tx}_{ty}.cdae",
-           "barrier": f"barrier_{aid}_{tx}_{ty}.cdae"}
+           "barrier": f"barrier_{aid}_{tx}_{ty}.cdae",
+           "railtunnel": f"railtunnel_{aid}_{tx}_{ty}.cdae"}
     for k in range(2, BLD_PARTS_MAX + 1):
         out[f"bld{k}"] = f"bld_{aid}_{tx}_{ty}_{k}.cdae"
     return out
@@ -9743,7 +9818,7 @@ def sound_boxes(chunks):
 def write_tile(out_dir, vfs_dir, aid, tx, ty, chunks, walks=None, road_mesh=None, deck_mesh=None, bld=None,
                props=None, wires=None, park=None, tunnel_mesh=None, fuel=None,
                rail_mesh=None, garage_sound=(), wells=(), guardrail_rows=None, custom_entries=None, decals=True,
-               bld_none=False, barrier_mesh=None, barrier_chunks=()):
+               bld_none=False, barrier_mesh=None, barrier_chunks=(), rail_tunnel=None, rail_tube=()):
     """Write a tile's chunks (atomically), its sidewalk mesh (walks: build_tile's runs, if any:
     `walks_<a>_<tx>_<ty>.cdae`, announced in the tile as "walk": {shape, pos}) and its road mesh
     (road_mesh: roadmesh.build's result: `road_<a>_<tx>_<ty>.cdae`, "road": {shape, pos}; the mod then
@@ -9760,7 +9835,7 @@ def write_tile(out_dir, vfs_dir, aid, tx, ty, chunks, walks=None, road_mesh=None
     # parses on its main thread
     data = {"v": VERSION, "chunks": [] if road_mesh is not None or not decals else
             [c for c in chunks if not c.get("tube_only")]}
-    sound = sound_boxes(chunks) + list(garage_sound)      # (garage_sound: buildings.garage_sound_boxes)
+    sound = sound_boxes(list(chunks) + list(rail_tube)) + list(garage_sound)   # (rail_tube: rail tunnels' bores; garage_sound: buildings.garage_sound_boxes)
     if sound:
         data["sound"] = sound
     if wells:                                               # oil wells' pump jacks (oilwells.tile_wells)
@@ -9796,6 +9871,11 @@ def write_tile(out_dir, vfs_dir, aid, tx, ty, chunks, walks=None, road_mesh=None
             cdae.write(os.path.join(out_dir, shape), col[0], col[1], uvs=col[2], material=col[3],
                        tri_materials=col[4], collision_only=True)
             data["railcol"] = {"shape": f"{vfs_dir}/{shape}", "pos": [x0, y0, 0.0]}
+    if rail_tunnel is not None:     # railways.tile_mesh's tube chunks through roadmesh.tunnel: bores and portals
+        x0, y0, _, _ = tile_bbox(tx, ty)
+        shape = f"railtunnel_{aid}_{tx}_{ty}.cdae"
+        roadmesh.write(os.path.join(out_dir, shape), rail_tunnel)
+        data["railtunnel"] = {"shape": f"{vfs_dir}/{shape}", "pos": [x0, y0, 0.0]}
     if walks:
         x0, y0, _, _ = tile_bbox(tx, ty)
         b = sidewalks.Builder((x0, y0, 0.0), collision=True)

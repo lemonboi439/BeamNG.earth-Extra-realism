@@ -1029,6 +1029,15 @@ class Dem:
                 while len(self._lru) > self.mem_tiles:
                     self._lru.popitem(last=False)
 
+    def shrink(self, keep):
+        """The decoded tiles keep(z, x, y) is False for, dropped (a teleport's prune: the old place's tiles
+        re-decode from the disk cache or re-fetch on demand). Returns the count dropped."""
+        with self._lock:
+            gone = [k for k in self._lru if not keep(*k)]
+            for k in gone:
+                del self._lru[k]
+        return len(gone)
+
     def block_max(self, z, x, y, block):
         """Highest elevation in every block x block pixel square of tile (z, x, y): a (TILE / block)²
         array, row 0 north (the horizon mode's coarse pass, farfield.horizon_grid)."""

@@ -1,0 +1,686 @@
+{
+  "road_asphalt_2lane": {
+    "name": "road_asphalt_2lane",
+    "mapTo": "road_asphalt_2lane",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "29a57eda-0408-55d8-8f1d-1de1eb5acce7",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_asphalt_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_asphalt_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_asphalt_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "ECA_road_edge_dirt": {
+    "name": "ECA_road_edge_dirt",
+    "mapTo": "ECA_road_edge_dirt",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "a7c0738c-393f-5832-8e2a-d08ded027358",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": true,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "italy_cobblestone": {
+    "name": "italy_cobblestone",
+    "mapTo": "italy_cobblestone",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "c1251b5c-c615-5c71-b162-fd93a2a2b906",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_cobble_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_cobble_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_cobble_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "gutter1": {
+    "name": "gutter1",
+    "mapTo": "gutter1",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "0456b189-93d1-5ac0-8e1c-cb929af4815f",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "sidewalk_concrete": {
+    "name": "sidewalk_concrete",
+    "mapTo": "sidewalk_concrete",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "5ae7dcdd-eded-530e-bd46-247daf756b73",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "m_gm_concrete_plain": {
+    "name": "m_gm_concrete_plain",
+    "mapTo": "m_gm_concrete_plain",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "299fe69e-32d3-5daa-b356-46914d533e7d",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "bne_highway_concrete": {
+    "name": "bne_highway_concrete",
+    "mapTo": "bne_highway_concrete",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "bc1b6d10-11af-5832-a1ba-19f3c7c6d37b",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "curbs": {
+    "name": "curbs",
+    "mapTo": "curbs",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "36b42dc1-f685-581e-b002-1dbe1c7b3131",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "sidewalk1": {
+    "name": "sidewalk1",
+    "mapTo": "sidewalk1",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "c01acb57-557b-5d62-bf7f-7b86c2773b90",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "tactile_indicator": {
+    "name": "tactile_indicator",
+    "mapTo": "tactile_indicator",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "127cf9f3-437d-5578-818c-9377ac6ac73b",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_tactile_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_tactile_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_tactile_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "m_metal_grid_drain": {
+    "name": "m_metal_grid_drain",
+    "mapTo": "m_metal_grid_drain",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "8b9ddb60-ddd0-5a57-8106-d4b63abbae89",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_drain_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_drain_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_drain_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "m_gm_metal_hotspotting": {
+    "name": "m_gm_metal_hotspotting",
+    "mapTo": "m_gm_metal_hotspotting",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "4d451cf7-cc20-5714-abc3-ce989a05edd8",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.45,
+          0.45,
+          0.45,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_metal_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "road_tramline": {
+    "name": "road_tramline",
+    "mapTo": "road_tramline",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "591731a5-8040-5000-bd7d-7d9fa5cc1df5",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_asphalt_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_asphalt_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_asphalt_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "road_gravel": {
+    "name": "road_gravel",
+    "mapTo": "road_gravel",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "9915bbac-1a8b-52b2-9585-f8549af8dc63",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_gravel_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_gravel_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_gravel_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "m_dirt_road": {
+    "name": "m_dirt_road",
+    "mapTo": "m_dirt_road",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "8a4af0b9-8c15-5566-92f6-47ca2f17c253",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "bne_dirt_gravel": {
+    "name": "bne_dirt_gravel",
+    "mapTo": "bne_dirt_gravel",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "0de3d38f-e739-5251-853d-4324dac7000c",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_gravel_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_gravel_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_gravel_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "bne_dirt_variation_01": {
+    "name": "bne_dirt_variation_01",
+    "mapTo": "bne_dirt_variation_01",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "4f2daead-f1c6-5db3-a864-1b5a1c477b41",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          1.0,
+          0.98,
+          0.95,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "bne_dirt_variation_02": {
+    "name": "bne_dirt_variation_02",
+    "mapTo": "bne_dirt_variation_02",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "3059ab46-3900-546b-891d-1fa31666764e",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.9,
+          0.86,
+          0.8,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "bne_dirt_variation_03": {
+    "name": "bne_dirt_variation_03",
+    "mapTo": "bne_dirt_variation_03",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "f893771f-650c-51ae-8ea0-2645223e49ed",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.82,
+          0.8,
+          0.76,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "bne_dirt_variation_04": {
+    "name": "bne_dirt_variation_04",
+    "mapTo": "bne_dirt_variation_04",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "f6d6e8f9-8e48-52b1-97df-547e543e02da",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.95,
+          0.9,
+          0.82,
+          1
+        ],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_dirt_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "line_white": {
+    "name": "line_white",
+    "mapTo": "line_white",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "1895a1c7-946b-5eb9-991b-283d9605648c",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.94,
+          0.94,
+          0.92,
+          1
+        ]
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": true,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "crossing_white": {
+    "name": "crossing_white",
+    "mapTo": "crossing_white",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "ccdef89a-549f-59c2-9d27-ef41588cec37",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.94,
+          0.94,
+          0.92,
+          1
+        ]
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": true,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "line_dashed_long": {
+    "name": "line_dashed_long",
+    "mapTo": "line_dashed_long",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "0b153fdc-eb77-5b16-8439-cb528dca91e4",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.94,
+          0.94,
+          0.92,
+          1
+        ]
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": true,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "line_runway_white": {
+    "name": "line_runway_white",
+    "mapTo": "line_runway_white",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "844d6d2b-2e93-528f-9c6d-e5d7729e4722",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.94,
+          0.94,
+          0.92,
+          1
+        ]
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": true,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "line_yellow": {
+    "name": "line_yellow",
+    "mapTo": "line_yellow",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "c2ef7401-6703-51d0-b5c5-59e2a6256a5d",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.92,
+          0.72,
+          0.06,
+          1
+        ]
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": true,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "line_runway_yellow": {
+    "name": "line_runway_yellow",
+    "mapTo": "line_runway_yellow",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "309350ad-f0ea-5d1d-a009-4dcaa87f654b",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.92,
+          0.72,
+          0.06,
+          1
+        ]
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": true,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "roadmarkings1": {
+    "name": "roadmarkings1",
+    "mapTo": "roadmarkings1",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "6268dc99-a73b-5f6e-bff4-d4996d8a3c5a",
+    "Stages": [
+      {
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_arrows.png",
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "alphaRef": 80
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": true,
+    "translucentZWrite": true,
+    "castShadows": false,
+    "annotation": "BNE"
+  }
+}

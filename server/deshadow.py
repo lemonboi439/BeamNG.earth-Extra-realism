@@ -111,6 +111,8 @@ PREP_M = 16000.0                    # regions queued at an anchor
 REQUEST_M = 24000.0                 # regions further than this from the anchor stay raw
 RETRY_S = 60.0                      # a region that failed (network) is tried again after this
 MEM_TILES = 512
+PARAMS_KEPT = 128           # ready regions' params kept (a long drive passed hundreds: the dict never shrank;
+                            # an evicted one reloads from its JSON in the disk cache, _load_params)
 MEM_REGIONS = 16                    # regions whose grids stay decoded (3 x 1088^2 bytes each)
 SAME = object()                     # LRU marker: the relit tile equals the raw one
 
@@ -717,7 +719,7 @@ class Deshadow:
         self._tl = threading.local()        # no_wait(): this thread's renders never wait for a region
         self._lock = threading.Lock()
         self._lru = OrderedDict()           # (z, x, y) -> uint8 tile or SAME
-        self._params = {}                   # (rx, ry) -> params of a ready region
+        self._params = OrderedDict()    # (rx, ry) -> params of a ready region (PARAMS_KEPT, oldest out: reloadable)
         self._grids = OrderedDict()         # (rx, ry) -> uint8 grids (decoded LRU)
         self._events = {}                   # (rx, ry) -> Event, set when the region is done (or failed)
         self._failed = {}                   # (rx, ry) -> monotonic time of the failure
@@ -758,6 +760,7 @@ class Deshadow:
     def _load_params(self, rk):
         """Params from the disk cache (current VERSION only). Caller holds the lock."""
         if rk in self._params:
+            self._params.move_to_end(rk)
             return self._params[rk]
         jp, npz = self._paths(rk)
         try:
@@ -768,8 +771,16 @@ class Deshadow:
         if P.get("version") != VERSION or (P.get("ok") and not os.path.exists(npz)):
             return None
         self.disk.used(jp)
-        self._params[rk] = P
+        self._params_put(rk, P)
         return P
+
+    def _params_put(self, rk, P):
+        """Remember a ready region's params (reloadable from the disk cache: bounded, oldest out).
+        Caller holds the lock."""
+        self._params[rk] = P
+        self._params.move_to_end(rk)
+        while len(self._params) > PARAMS_KEPT:
+            self._params.popitem(last=False)
 
     def _region_center(self, rk):
         lon, lat = lonlat_of_px((rk[0] + 0.5) * TILE, (rk[1] + 0.5) * TILE, REGION_Z)
@@ -945,7 +956,7 @@ class Deshadow:
             _atomic_write(jp, lambda f: f.write(json.dumps(P).encode()))
             self.disk.wrote(jp)
             with self._lock:
-                self._params[rk] = P
+                self._params_put(rk, P)
                 if grids is not None:
                     self._grids[rk] = grids
                     while len(self._grids) > MEM_REGIONS:

@@ -44,6 +44,8 @@ TILE_PX_M = 12.0            # m of wall per 1024 px of the window sheets (5 sash
 ROOF_UV_M = 6.0             # m per repeat of the roof textures
 SIDING_UV_M = 3.0           # m per repeat of the plain wall textures (sheds, garages)
 PITCH = {"gabled": 32.0, "hipped": 26.0}     # degrees
+ROOF_RISE_MAX_SHARE = 0.45   # a pitched roof not mapped (roof:height absent) rises at most this share of the mapped
+                             # height: a wide building's guessed 42° gable ate most of a 10 m house (walls 2.5 m)
 EAVE_M = 0.35               # m a pitched roof overhangs its walls
 CORNICE_OUT_M = 0.28        # a flat roof's cornice: how far it stands out, its depth below and above the eave
 CORNICE_DOWN_M = 0.45
@@ -330,7 +332,7 @@ def oriented_box(p):
 class Spec:
     """What is built for one footprint (decided by plan())."""
     __slots__ = ("ring", "floors", "floor_h", "height", "roof", "roof_mat", "facade", "band", "shop", "plain", "min_h", "wall", "door", "windows", "front", "steeple", "stoop",
-                 "sign", "porch", "cls", "seed", "deck", "pitch", "portal", "gring", "ship")
+                 "sign", "porch", "cls", "seed", "deck", "pitch", "portal", "gring", "ship", "roof_across")
 
     def __init__(self, **kw):
         for k in self.__slots__:
@@ -624,8 +626,10 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
                 roof = "gabled" if seed < 1.0 - style.hipped else "hipped"
         else:
             roof = "flat"
-    # pitched roofs only on near-rectangular footprints (a church's nave keeps its gable beside a tower or an apse)
-    if roof != "flat" and (box_fill < (0.6 if church else 0.8) or hw < 2.0
+    # pitched roofs only on near-rectangular footprints (a church's nave keeps its gable beside a tower or an apse):
+    # 0.9 of the oriented box, not 0.8: an L-shaped or angled house was drawn as its box and grew over the notch -
+    # into a neighbour or the street (placement/scale, the user 2026-11-05)
+    if roof != "flat" and (box_fill < (0.7 if church else 0.9) or hw < 2.0
                            or hw > (18.0 if barn else 20.0 if church else 14.0)):
         roof = "flat"
     # a city tower's ground floor is shops or a lobby (Midtown, 2026-10-14: most towers have no class, and their
@@ -635,18 +639,50 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
         shop = True
     if church:
         shop = False                                # (no shopfronts on a church, Cluj 2026-10-15)
+    # the ridge's axis: roof:orientation if mapped, else the box axis closest to roof:direction (across when the
+    # direction is nearer the other one)
+    roof_across = False
+    orient = str(attrs.get("roof_orientation") or "").lower()
+    if orient == "across":
+        roof_across = True
+    elif orient != "along":
+        rd = attrs.get("roof_direction")
+        try:
+            rd = float(rd) % 180.0 if rd is not None and np.isfinite(float(rd)) else None
+        except (TypeError, ValueError):
+            rd = None
+        if rd is not None:
+            u0 = oriented_box(ring)[1]
+            bearing = math.degrees(math.atan2(float(u0[0]), float(u0[1]))) % 180.0
+            d = abs(bearing - rd) % 180.0
+            roof_across = min(d, 180.0 - d) > 45.0
+    span_half = hl if roof_across else hw       # the roof's rise runs across this half span
+    pitch_use = style.pitch if style.pitch is not None else PITCH.get(roof, PITCH["gabled"])
+    spec_pitch = style.pitch                    # (None for most regions: the roof's default, roof_pitch)
     if h is None:
         h = nf * floor_h + (GROUND_FLOOR_SHOP_M - floor_h if shop and nf > 1 else 0.0) + (0.6 if roof == "flat" else 0.2)
         if west_town and roof == "flat" and nf == 1 and area >= 80 and not (shed or barn):
             h += FALSE_FRONT_M                      # a main-street shop's tall parapet
-    else:
-        if attrs.get("roof_height") and np.isfinite(attrs["roof_height"]) and roof != "flat":
-            h = max(2.5, h - float(attrs["roof_height"]))
-        elif roof != "flat":
-            h = max(2.5, h - hw * math.tan(math.radians(style.pitch or PITCH[roof])))
-        if nf is None:
-            # a church: one tall storey (Cluj's St. Michael's, 25 m, came out as three 8 m floors)
-            nf = 1 if church else max(1, int(round(h / floor_h)))
+    elif roof != "flat":
+        rh = attrs.get("roof_height")
+        try:
+            rh = float(rh) if rh is not None and np.isfinite(float(rh)) and float(rh) > 0 else None
+        except (TypeError, ValueError):
+            rh = None
+        if rh is not None:                          # the mapped roof: its height wins, the walls take the rest
+            rise = min(rh, 0.8 * h)
+            capped = True
+        else:                                       # a guessed roof: never eat the mapped walls (a weak gable)
+            natural = span_half * math.tan(math.radians(pitch_use))
+            rise = min(natural, ROOF_RISE_MAX_SHARE * h)
+            capped = rise < natural - 1e-9
+        if capped:                                  # the drawn roof's pitch gives exactly that rise
+            pitch_use = math.degrees(math.atan2(rise, max(span_half, 0.01)))
+            spec_pitch = pitch_use
+        h = max(1.0, h - rise)
+    if nf is None and h is not None:
+        # a church: one tall storey (Cluj's St. Michael's, 25 m, came out as three 8 m floors)
+        nf = 1 if church else max(1, int(round(h / floor_h)))
     nf = max(1, min(nf, 120))
     floor_h = h / nf
     if shed or barn:
@@ -815,7 +851,7 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
     return Spec(ring=ring, floors=nf, floor_h=floor_h, height=h, roof=roof, roof_mat=roof_mat, facade=facade,
                 band=band, shop=shop and not shed and nf >= 1, plain=plain, seed=seed, min_h=0.0, wall=wall,
                 windows=windows, steeple=church and area < 2500, porch=porch, cls=cls,
-                deck=garage and roof == "flat", pitch=style.pitch)
+                deck=garage and roof == "flat", pitch=spec_pitch, roof_across=roof_across)
 
 
 class Mesh:
@@ -1027,10 +1063,22 @@ def _portal_lift(frame, ring, x0, y0, tunnels_xy, elev):
 
 
 def base_z(spec, gmin, gmax):
-    """The ground a building's floors stand on: the footprint's highest, but the lowest for one over a tunnel's portal
-    (the road at its mouth: from the hill over it, Wabash's portal house floated ~10 m over the portal and
-    Eisenhower's portal building over its frames, 2026-10-17)."""
-    return gmin if spec.portal else gmax
+    """The ground a building's floors stand on: the median of the ground at its ring's corners, but the lowest for
+    one over a tunnel's portal (the road at its mouth: from the hill over it, Wabash's portal house floated ~10 m
+    over the portal and Eisenhower's portal building over its frames, 2026-10-17). The highest corner (before
+    2026-11-04) put a block on a sloping estate a few decimetres over the street on its downhill side (Guinness
+    Square: ground floor windows 1.5 m over the kerb); the median halves that on either side, and the walls' skirt
+    still reaches the lowest ground."""
+    if spec.portal:
+        return gmin
+    g = getattr(spec, "gring", None)
+    if g is not None and len(g):
+        try:
+            z = float(np.median(np.asarray(g, np.float64)))
+        except (TypeError, ValueError):
+            return gmax
+        return float(np.clip(z, gmin, gmax)) if np.isfinite(z) else gmax
+    return gmax
 
 
 def drawn_ring(spec):
@@ -1178,6 +1226,8 @@ def _roof(m, spec, ring, z_eave, mat_idx):
         m.poly(pts, uv, rm)
         return
     c, u, hl, hw = oriented_box(ring)
+    if getattr(spec, "roof_across", False):          # (roof:orientation / roof:direction: ridge across the long side)
+        u, hl, hw = np.array([-u[1], u[0]]), hw, hl
     v = np.array([-u[1], u[0]])
     hl2, hw2 = hl + EAVE_M, hw + EAVE_M
     rise = hw2 * math.tan(math.radians(roof_pitch(spec)))
@@ -1626,7 +1676,7 @@ def collision_mesh(specs_and_ground):
         if _area2(ring) < 0:
             ring = ring[::-1]
         mh = spec.min_h or 0.0
-        z0 = gmin - FOUNDATION_M if mh <= 0.5 else base_z(spec, gmin, gmax) + mh
+        z0 = gmin - SKIRT_M if mh <= 0.5 else base_z(spec, gmin, gmax) + mh   # (the drawn walls' own foot: build)
         z1 = base_z(spec, gmin, gmax) + mh + (spec.floor_h if spec.cls == "ship" else spec.height)  # (a ship: its deck)
         for i in range(len(ring)):
             a, b = ring[i], ring[(i + 1) % len(ring)]
@@ -2341,6 +2391,46 @@ def _hulls_nearby(frame, layers, x0, y0, x1, y1, water_xy, reach=ships.PIER_REAC
     return out
 
 
+
+# A building is drawn as its parts (OpenStreetMap's Simple 3D Buildings), but its parts must cover it: Ülemiste keskus,
+# Tallinn (GitHub #608), a 51,000 m2 mall mapped with height 10, has a single 452 m2 part (height 5), and was drawn as
+# that part alone, the rest bare ground. Under PARTS_COVER_MIN the outline is drawn too, the parts standing on it, when
+# it has a height or levels of its own and every part stands on the ground (a part off the ground is a structure
+# modelled in parts, its gaps open on purpose). BNE_PARTS_COVER=off: as before.
+PARTS_COVER_ON = os.environ.get("BNE_PARTS_COVER", "on") != "off"
+PARTS_COVER_MIN = 0.5
+PARTS_COVER_SAMPLES = 400
+PARTS_COVER_MIN_H = 2.5
+PARTS_GROUND_M = 0.5
+
+
+def parts_cover(outline, part_rings):
+    """The share of outline (k, 2) that any of part_rings covers (same frame), from about PARTS_COVER_SAMPLES grid
+    points inside it; 1.0 for an outline too small to sample. Pure."""
+    from polygon import Path
+    o = np.asarray(outline, np.float64)[:, :2]
+    area = abs(_area2(o)) / 2.0
+    lo, hi = o.min(0), o.max(0)
+    step = max(math.sqrt(area / PARTS_COVER_SAMPLES), 0.25)
+    gx, gy = np.meshgrid(np.arange(lo[0] + step / 2, hi[0], step), np.arange(lo[1] + step / 2, hi[1], step))
+    g = np.stack([gx.ravel(), gy.ravel()], 1)
+    g = g[Path(o).contains_points(g)] if len(g) else g
+    if not len(g):
+        return 1.0
+    hit = np.zeros(len(g), bool)
+    for r in part_rings:
+        hit |= np.asarray(Path(np.asarray(r, np.float64)[:, :2]).contains_points(g), bool)
+    return float(hit.mean())
+
+
+def _outline_under_parts(at, bparts):
+    """May a building drawn as its parts (bparts: [(ring, (own height, bottom) or None)]) have its outline drawn under
+    them: its own height (or levels) mapped, PARTS_COVER_MIN_H or more, and no part off the ground."""
+    h, fl = at.get("height"), at.get("num_floors")
+    own = (h is not None and np.isfinite(h) and h >= PARTS_COVER_MIN_H) or         (h is None or not np.isfinite(h)) and fl is not None and np.isfinite(fl) and fl >= 1
+    return bool(own) and all(p[1] is None or p[1][1] <= PARTS_GROUND_M for p in bparts)
+
+
 @profile_step('Building site selection')
 def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=(), west_town=False, roads_xy=None,
                    tunnels_xy=None, garages_xy=None, supports=None, bridges_xy=None, water_xy=None, decks=None,
@@ -2400,7 +2490,8 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
                     continue
             at = {k: (a[k][i] if k in a else None) for k in
                   ("class", "subtype", "height", "num_floors", "min_height", "roof_shape", "roof_height", "name",
-                   "facade_material", "facade_color", "roof_material", "roof_color")}
+                   "facade_material", "facade_color", "roof_material", "roof_color", "roof_direction",
+                   "roof_orientation")}
             if key is not None:         # (plan's random choices keyed on the feature, not where the anchor puts it)
                 at["seed_id"] = str(key)
             lm = landmarks.of(a["src_record"][i]) if a.get("src_record") is not None else None
@@ -2466,7 +2557,10 @@ def tile_buildings(frame, x0, y0, x1, y1, layers, elev, water=None, part_layers=
                     mins.append(pmh)
                 if key is not None:
                     seen.add(key)
-                continue
+                if not (PARTS_COVER_ON and _outline_under_parts(at, bparts)
+                        and parts_cover(np.stack([e, n], 1), [p[0] for p in bparts]) < PARTS_COVER_MIN):
+                    continue
+                # (parts over too little of it: the outline too, as a building of its own)
             ring = clean_ring(np.stack([e - x0, n - y0], 1))
             if ring is None or _area2(ring) / 2 < MIN_AREA_M2:
                 continue
@@ -3717,6 +3811,8 @@ def far_items(frame, tile, ty, md, ground, lamp_region=None):
                            supports=support_rings(frame, [c.layers.get("infrastructure") for c in cds], x0, y0),
                            bridges_xy=bridge_lines(frame, [c.layers.get("roads") for c in cds], x0, y0),
                            water_xy=water_rings(frame, [c.layers.get("water") for c in cds], x0, y0),
+                           roads_xy=road_lines(frame, [c.layers.get("roads") for c in cds], x0, y0),
+                           tunnels_xy=tunnel_lines(frame, [c.layers.get("roads") for c in cds], x0, y0),
                            ml_roads_xy=road_lines(frame, [c.layers.get("roads") for c in cds], x0, y0),
                            ways_xy=way_lines(frame, [c.layers.get("roads") for c in cds], x0, y0, size=x1 - x0))
     size = max(x1 - x0, y1 - y0)
@@ -3953,7 +4049,9 @@ def sky_items(frame, box, keys, md, ground, lamp_region=None, own=None):
         return None
     cds = [md.cell(k, layers=("buildings", "roads"), kind="background") for k in keys]
     layers = [c.layers.get("buildings") for c in cds]
-    items = tile_buildings(frame, x0, y0, x1, y1, layers, ground, min_size=(1e9, SKY_MIN_AREA_M2), own=own)
+    items = tile_buildings(frame, x0, y0, x1, y1, layers, ground, min_size=(1e9, SKY_MIN_AREA_M2), own=own,
+                           roads_xy=road_lines(frame, [c.layers.get("roads") for c in cds], x0, y0),
+                           tunnels_xy=tunnel_lines(frame, [c.layers.get("roads") for c in cds], x0, y0))
     size = max(x1 - x0, y1 - y0)
     lamps = far_lamps(frame, [c.layers.get("roads") for c in cds], x0, y0, size,
                       built_squares(items, 0.0, 0.0, size), ground, lamp_region, own=own)

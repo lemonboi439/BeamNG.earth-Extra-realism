@@ -357,6 +357,18 @@ class RoadWidths:
         elif missing:
             self._walls(missing[0])
 
+    def shrink(self):
+        """Half of the kept walls and combos (the oldest first: a teleport's prune — the keys are strings, no
+        place to measure them against; the next road that needs a cell's walls rebuilds them from the buildings
+        layer, also on disk). Returns the count dropped."""
+        with self.lock:
+            n = len(self.walls) // 2 + len(self.combos) // 2
+            for _ in range(len(self.walls) // 2):
+                self.walls.popitem(last=False)
+            for _ in range(len(self.combos) // 2):
+                self.combos.popitem(last=False)
+        return n
+
     def _near_walls(self, ll):
         """(frame, Walls) of the buildings in the cells within NEAR_M of the road (lon/lat (k, 2)): its own cell's,
         or, near a cell's edge, those of the cells there in the first one's frame (kept for the COMBOS last used).

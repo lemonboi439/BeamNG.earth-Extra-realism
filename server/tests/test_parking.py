@@ -79,12 +79,33 @@ class CurbTest(unittest.TestCase):
         self.assertEqual(sorted(map(tuple, a + b)), sorted(map(tuple, whole)))
 
     def test_no_parking_on_highways_country_roads_or_narrow_lanes(self):
-        for r in (street("t", "trunk"), street("c", urban=False), street("n", width=6.0)):
+        for r in (street("t", "trunk"), street("c", urban=False), street("n", width=5.0)):
             self.assertEqual(parking.curb_spots([r], walks(r), (0, 0, 256, 256)), [])
+
+    def test_a_six_metre_estate_road_parks_one_side(self):
+        r = eligible(width=6.0)
+        spots = parking.curb_spots([r], walks(r), (0, 0, 256, 256))
+        self.assertTrue(spots)
+        self.assertEqual(len({s[1] > 50 for s in spots}), 1)
 
     def test_narrow_street_parks_one_side(self):
         r = eligible(width=8.0)
         spots = parking.curb_spots([r], walks(r), (0, 0, 256, 256))
+        self.assertTrue(spots)
+        self.assertEqual(len({s[1] > 50 for s in spots}), 1)
+
+    def test_a_street_without_sidewalks_parks_along_its_edge(self):
+        # the estate road whose front gardens the map leaves untagged (Guinness Square): no sidewalk run, but its
+        # curbside spots are the sidewalk ones' (the curb line at half the width, the set CURB_OFF_M inside)
+        r = eligible(width=10.0)
+        with_walks = parking.curb_spots([r], walks(r), (0, 0, 256, 256))
+        without = parking.curb_spots([r], [], (0, 0, 256, 256))
+        self.assertTrue(without)
+        self.assertEqual(sorted(map(tuple, without)), sorted(map(tuple, with_walks)))
+
+    def test_a_narrow_street_without_sidewalks_parks_one_side(self):
+        r = eligible(width=8.0)
+        spots = parking.curb_spots([r], [], (0, 0, 256, 256))
         self.assertTrue(spots)
         self.assertEqual(len({s[1] > 50 for s in spots}), 1)
 
@@ -269,3 +290,52 @@ class HitsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AisleLotTest(unittest.TestCase):
+    """A lot mapped by its aisles gets the aisle's stalls and markings, not the lot's own oriented-box rows
+    (P2.4)."""
+
+    @staticmethod
+    def lot_features():
+        import mapgeom
+        from test_roads import FRAME
+        e = np.array([0.0, 60.0, 60.0, 0.0, 0.0])
+        n = np.array([0.0, 0.0, 40.0, 40.0, 0.0])
+        la, lo, _ = FRAME.enu_to_geodetic(e, n, 0.0)
+        return mapgeom.Features(layer="infrastructure", ids=np.array(["p0"]), kind=np.full(1, mapgeom.POLYGON, np.uint8),
+                                part_off=np.array([0, 1], np.int64), ring_off=np.array([0, 1], np.int64),
+                                coord_off=np.array([0, 5], np.int64),
+                                lonlat=np.array(list(zip(lo, la)), np.float64),
+                                attrs={"class": np.array(["parking"], object)})
+
+    @staticmethod
+    def aisle_features():
+        from test_roads import features, rules
+        f = features([[(10.0, 20.0), (50.0, 20.0)]], ["service"])
+        f.rules["subclass"] = rules([(0, "parking_aisle")])
+        return f
+
+    @staticmethod
+    def md(roads_feats):
+        class MD:
+            def cell(self, key, layers=None, kind=None):
+                return type("C", (), {"layers": {"infrastructure": AisleLotTest.lot_features(), "roads": roads_feats}})()
+        return MD()
+
+    def test_an_aisle_lot_gets_no_rect_rows(self):
+        from test_roads import FRAME
+        z = lambda la, lo: np.full(np.shape(la), 3.0)
+        with_aisle = parking.tile_lot_spots(FRAME, 0, 0, self.md(self.aisle_features()), z)
+        self.assertEqual(with_aisle, [], "the aisle's spots are build_tile's; no duplicated rect rows")
+        without = parking.tile_lot_spots(FRAME, 0, 0, self.md(None), z)
+        self.assertGreater(len(without), 10, "a lot without aisles keeps its rows")
+
+    def test_aisle_markings_survive_in_an_aisle_lot(self):
+        from test_roads import FRAME
+        z = lambda la, lo: np.full(np.shape(la), 3.0)
+        mark = {"m": "line_white", "w": 0.1, "p": 2, "n": [[10.0, 20.0, 3.0], [12.0, 20.0, 3.0]]}
+        kept = parking.finish_markings(FRAME, 0, 0, self.md(self.aisle_features()), z, marks=[mark])
+        self.assertIn(mark, kept, "the aisle's line is not dropped with the lot")
+        dropped = parking.finish_markings(FRAME, 0, 0, self.md(None), z, marks=[mark])
+        self.assertNotIn(mark, dropped, "a rect lot draws its own lines")

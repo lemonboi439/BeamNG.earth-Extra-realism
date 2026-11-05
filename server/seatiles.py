@@ -36,6 +36,23 @@ SEA_SPLIT_SAMPLES = (16, 64)    # samples per edge of a tile checked for low lan
 SEA_MAX_TILES = 200             # nearest first
 SEA_E = 0.0                     # m: the sea surface (seacarve.SEA_E)
 EARTH_R = 6371000.0
+WATER_FLOOR_M = 2.0             # m: a water tile's volume reaches this far under its deepest sampled bed (a car on the
+                                # bed stays in water). Not 100 m: a WaterBlock floods its whole box, so a deep box put
+                                # tunnels and underground lines under a river in water (the user, 2026-11-04)
+WATER_DEPTH_DEFAULT_M = 30.0    # m: the volume below the surface where no ground was sampled (tiles planned without
+                                # ground_at); the WaterBlock z size is twice this
+WATER_Z_DEFAULT_M = 2.0 * WATER_DEPTH_DEFAULT_M
+
+
+def _depth(ground, level):
+    """A water tile's WaterBlock z size (m): twice the volume below its surface. The engine caps a block's volume at
+    its centre, so the size is twice the depth needed: down to the lowest sampled bed plus WATER_FLOOR_M, so a car on
+    the bed stays in water and a tunnel under the bed stays outside it."""
+    g = np.asarray(ground, np.float64)
+    g = g[np.isfinite(g)]
+    if not len(g):
+        return 2.0 * WATER_DEPTH_DEFAULT_M
+    return float(2.0 * max(WATER_FLOOR_M, (float(level) - float(g.min())) + WATER_FLOOR_M))
 
 
 @dataclass(frozen=True)
@@ -47,10 +64,11 @@ class Tile:
     size: float
     nx: float               # the local vertical's tilt (its x and y; z = sqrt(1 - nx^2 - ny^2))
     ny: float
+    depth: float = WATER_Z_DEFAULT_M   # the WaterBlock's z size (twice its volume below the surface; see _depth)
 
     def to_msg(self):
         return [self.key, round(self.x, 2), round(self.y, 2), round(self.z, 3), self.size,
-                round(self.nx, 6), round(self.ny, 6)]
+                round(self.nx, 6), round(self.ny, 6), round(self.depth, 1)]
 
 
 def _dist(x, y, x0, y0, s):
@@ -126,32 +144,33 @@ def plan(frame, x, y, sea_at, radius=None, ground_at=None):
             if not corners:
                 continue
             if ground_at is None:
-                keep += [(x0, y0, s) for x0, y0 in corners]
+                keep += [(x0, y0, s, WATER_Z_DEFAULT_M) for x0, y0 in corners]
                 continue
             n = int(min(max(s / 32.0, SEA_SPLIT_SAMPLES[0]), SEA_SPLIT_SAMPLES[1]))
             lat, lon = _grid(frame, corners, s, n)
             wet = np.asarray(sea_at(lat, lon, s), bool).reshape(len(corners), -1)
             g = np.asarray(ground_at(lat, lon, s), np.float64).reshape(len(corners), -1)
             low = ~wet & (g < SEA_E - (SEA_FLOOD_M if s <= POLY_TILE_MAX else SEA_FLOOD_FAR_M))   # land under the sea
-            for (x0, y0), w, lo in zip(corners, wet, low):
+            for (x0, y0), w, lo, gr in zip(corners, wet, low, g):
                 # (a share, not any: the DEM's water under the piers the map has as land, Manhattan's waterfront,
                 # split every tile on to 200)
+                depth = _depth(gr, SEA_E)
                 if lo.mean() <= SEA_FLOOD_SHARE:
-                    keep.append((x0, y0, s))
+                    keep.append((x0, y0, s, depth))
                 elif s / 2 >= max(SEA_TILE_FLOOR, SEA_FLOOR_K * _dist(x, y, x0, y0, s)):
                     h = s / 2
                     todo += [(x0 + a * h, y0 + b * h, h) for a in (0, 1) for b in (0, 1)]
                 elif w.mean() >= 0.5:
-                    keep.append((x0, y0, s))
+                    keep.append((x0, y0, s, depth))
     keep.sort(key=lambda t: _dist(x, y, t[0], t[1], t[2]))
     out = []
-    for x0, y0, s in keep[:SEA_MAX_TILES]:
+    for x0, y0, s, depth in keep[:SEA_MAX_TILES]:
         cx, cy = x0 + s / 2, y0 + s / 2
         la, lo, _ = frame.enu_to_geodetic(cx, cy, 0.0)
         z = float(np.asarray(frame.geodetic_to_enu(la, lo, 0.0)[2]))
         # the local vertical at (cx, cy): the sphere's normal, the frame's up tilted by the offset
         nx, ny = cx / EARTH_R, cy / EARTH_R
-        out.append(Tile(f"{int(s)}_{int(x0 // s)}_{int(y0 // s)}", cx, cy, z, s, nx, ny))
+        out.append(Tile(f"{int(s)}_{int(x0 // s)}_{int(y0 // s)}", cx, cy, z, s, nx, ny, depth))
     return out
 
 
@@ -242,19 +261,19 @@ def plan_lakes(frame, x, y, lake_at, ground_at, radius=None):
             if ((fit and clear and wet.mean() >= 0.5) or
                 (s <= LAKE_TILE_MIN and wet.mean() >= 0.5 and fit
                  and (flooded <= LAKE_FLOOD_SHARE or s <= LAKE_TILE_FLOOR))):
-                out.append((x0, y0, s, a, bx, by))
+                out.append((x0, y0, s, a, bx, by, _depth(gr, a)))
             elif s > LAKE_TILE_FLOOR:
                 h = s / 2
                 nxt += [(x0 + a * h, y0 + b * h) for a in (0, 1) for b in (0, 1)]
         todo, s = nxt, s / 2
     out.sort(key=lambda t: _dist(x, y, t[0], t[1], t[2]))
     tiles = []
-    for x0, y0, s, level, bx, by in out[:LAKE_MAX_TILES]:
+    for x0, y0, s, level, bx, by, depth in out[:LAKE_MAX_TILES]:
         cx, cy = x0 + s / 2, y0 + s / 2
         la, lo, _ = frame.enu_to_geodetic(cx, cy, 0.0)
         z = float(np.asarray(frame.geodetic_to_enu(la, lo, level)[2]))
         # the tilt: the local vertical, then the water's own slope (a surface rising by b per metre in x
         # leans its normal by -b in x)
         tiles.append(Tile(f"L{int(s)}_{int(x0 // s)}_{int(y0 // s)}_{int(round(level * 10))}", cx, cy, z, s,
-                          cx / EARTH_R - bx, cy / EARTH_R - by))
+                          cx / EARTH_R - bx, cy / EARTH_R - by, depth))
     return tiles

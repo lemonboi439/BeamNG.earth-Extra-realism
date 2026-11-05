@@ -245,7 +245,8 @@ class PlansAcrossAnchorsTest(unittest.TestCase):
         b = grading.Grader(east(LAT, LON, 15.0), md, self.hill)          # (another process, another anchor)
         b.shared = plancache.for_grader(root, b, None, None)
         zb = b.apply(la, lo, self.hill(la, lo))
-        self.assertEqual(md.calls, 0, "read from the cache: no road data fetched")
+        self.assertEqual(md.road_calls, 0, "read from the cache: no road data fetched")
+        self.assertGreater(md.calls, 0, "...the buildings read for the pads (P2.1)")
         self.assertGreater(b.shared.stats["read"], 0)
         self.assertTrue(np.array_equal(za, zb))
 

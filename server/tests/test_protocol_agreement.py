@@ -288,7 +288,8 @@ SERVER_TO_MOD = {
     "block_base": {"anchorId": F(int), "cx": F(NUM), "cy": F(NUM), "base": F(str), "baseSize": F(NUM)},
     # the highest ground near the player's path (groundahead.py; the mod's altitude rule), z in the anchor's frame
     "ground_ahead": {"anchorId": F(int), "z": F(NUM)},
-    # the water near the player (--sea on): tiles [key, x, y, z, size, nx, ny] (seatiles.py), rivers
+    # the water near the player (--sea on): tiles [key, x, y, z, size, nx, ny, depth] (seatiles.py; depth is the
+    # WaterBlock's z size, twice its volume below the surface), rivers
     # [key, kind, flow m/s, [[x, y, z, width, depth], ...]] (riverlines.py)
     "sea": {"anchorId": F(int), "tiles": F(list), "rivers": F(list)},
     # data credits for the tiles around the player (credits.py; additive, protocol 4, --credits on)

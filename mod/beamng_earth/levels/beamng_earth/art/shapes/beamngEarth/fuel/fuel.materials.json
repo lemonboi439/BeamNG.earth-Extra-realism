@@ -1,0 +1,242 @@
+{
+  "bne_fuel_white": {
+    "name": "bne_fuel_white",
+    "mapTo": "bne_fuel_white",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "8126dbad-8b74-5bf6-ba82-48764ac2326a",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.9,
+          0.9,
+          0.87,
+          1.0
+        ],
+        "metallicFactor": 0.0,
+        "roughnessFactor": 0.55
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": true
+  },
+  "bne_fuel_red": {
+    "name": "bne_fuel_red",
+    "mapTo": "bne_fuel_red",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "cae684a5-189d-5c52-81a7-4691daa094ab",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.55,
+          0.06,
+          0.05,
+          1.0
+        ],
+        "metallicFactor": 0.0,
+        "roughnessFactor": 0.45
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": true
+  },
+  "bne_fuel_metal": {
+    "name": "bne_fuel_metal",
+    "mapTo": "bne_fuel_metal",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "e3eae773-c763-5033-9ca2-aad7bd52b9da",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.55,
+          0.57,
+          0.59,
+          1.0
+        ],
+        "metallicFactor": 0.7,
+        "roughnessFactor": 0.4
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": true
+  },
+  "bne_fuel_dark": {
+    "name": "bne_fuel_dark",
+    "mapTo": "bne_fuel_dark",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "ca88eb05-8236-59f4-96a2-e86ea7bb2dbf",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.08,
+          0.09,
+          0.1,
+          1.0
+        ],
+        "metallicFactor": 0.2,
+        "roughnessFactor": 0.5
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": true
+  },
+  "bne_fuel_screen": {
+    "name": "bne_fuel_screen",
+    "mapTo": "bne_fuel_screen",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "ee40d262-efc0-5e8f-9d5e-d9ce525787de",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.1,
+          0.2,
+          0.26,
+          1.0
+        ],
+        "metallicFactor": 0.0,
+        "roughnessFactor": 0.15
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": true
+  },
+  "bne_fuel_yellow": {
+    "name": "bne_fuel_yellow",
+    "mapTo": "bne_fuel_yellow",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "63349fa9-095e-5b18-8e79-2446f7fb0179",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.85,
+          0.64,
+          0.08,
+          1.0
+        ],
+        "metallicFactor": 0.0,
+        "roughnessFactor": 0.5
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": true
+  },
+  "bne_fuel_concrete": {
+    "name": "bne_fuel_concrete",
+    "mapTo": "bne_fuel_concrete",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "c46f7687-9362-5a92-914b-5024f02e824d",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.55,
+          0.54,
+          0.51,
+          1.0
+        ],
+        "metallicFactor": 0.0,
+        "roughnessFactor": 0.85
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": true
+  },
+  "bne_pumpjack_metal": {
+    "name": "bne_pumpjack_metal",
+    "mapTo": "bne_pumpjack_metal",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "6f313911-bd28-51a1-9082-bdddabf8d27c",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.3,
+          0.31,
+          0.33,
+          1.0
+        ],
+        "metallicFactor": 0.7,
+        "roughnessFactor": 0.55
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": true
+  },
+  "bne_pumpjack_dark": {
+    "name": "bne_pumpjack_dark",
+    "mapTo": "bne_pumpjack_dark",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "b9963b20-10c6-5b4c-bef8-65f2d068467b",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.12,
+          0.12,
+          0.13,
+          1.0
+        ],
+        "metallicFactor": 0.3,
+        "roughnessFactor": 0.6
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": true
+  },
+  "bne_pumpjack_red": {
+    "name": "bne_pumpjack_red",
+    "mapTo": "bne_pumpjack_red",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "ac3b245f-8b5a-506f-aa5b-3e1146f170c4",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.42,
+          0.08,
+          0.06,
+          1.0
+        ],
+        "metallicFactor": 0.1,
+        "roughnessFactor": 0.6
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": true
+  }
+}

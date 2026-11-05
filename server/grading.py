@@ -37,6 +37,7 @@ from runtimeprofiler import ThreadPoolExecutor
 import numpy as np
 
 import mapcells
+import mapgeom
 import railways as railwaysmod
 import roads as roadsmod
 import seatiles
@@ -132,7 +133,29 @@ SEP_FROM_M = 2.0
 SEP_FULL_M = 4.0
 CORE_FADE_M = 2.0
 SIDE_FADE_M = 2.0           # m of (side - ahead) over which a segment counts as beside the point (ahead: its own road)
+# Building pads (the user: "height maps need a huge rework (for buildings)"): each footprint's ground flattened to a
+# level pad under its oriented box, then back to the natural ground over a slope (a building on a hillside stood on
+# its highest corner with the downhill facade floating). Roads are graded over the pads (grade_points runs after).
+BLD_PAD_MIN_HALF_M = 1.5    # m: a footprint narrower than this gets no pad (a shed follows the ground)
+BLD_PAD_MIN_AREA_M2 = 25.0  # ... nor one smaller than this, nor larger than BLD_PAD_MAX_AREA_M2 (a bad ring)
+BLD_PAD_MAX_AREA_M2 = 40000.0
+BLD_PAD_MAX_DZ_M = 30.0     # m: the ground under a footprint ranging more than this (a cliff) is left as it is
+BLD_PAD_BLEND_SLOPE = 2.0   # the slope back to the natural ground: this many m out per m of height difference (1:2)
+BLD_PAD_BLEND_MIN_M = 2.0
+BLD_PAD_BLEND_MAX_M = 14.0
+BLD_PAD_GRID_M = 32.0       # m: the point grid _apply_pads gathers a pad's points from
+# Parking lots (P2.4): the same flat pad with the ground under a lot levelled (stalls were draped on the slope).
+LOT_PAD_MIN_HALF_M = 2.0
+LOT_PAD_MIN_AREA_M2 = 50.0
+LOT_PAD_MAX_AREA_M2 = 250000.0
+LOT_PAD_MAX_DZ_M = 40.0
 RETRY_S = 60.0              # s before a cell whose road data failed is asked for again
+PLAN_MEM_MB = 32            # a planner's planned cells' budget (budget.py scales it): a cell's plans are 0.1-5 MB
+                            # and a region's planner kept every cell it ever planned (up to MAPPED 256 a region)
+                            # for the life of the region — a drive across a continent grew them without bound
+                            # (2026-11-04 RAM overhaul). Over the budget the cells farthest from the last query
+                            # go (never a queried one); an evicted cell re-plans deterministically, and its plans
+                            # are on disk (plancache), so the graded output never changes — only the RAM does.
 
 # Junctions: a side road's end takes the height of the road it joins (snap_junctions; mpsteppe's PR #290)
 JUNCTION_SNAP_ON = os.environ.get("BNE_JUNCTION_SNAP", "1") != "0"
@@ -502,7 +525,8 @@ def field_heights(frame, elev, xy, r, sigma):
     return (wts[:, None] * z).sum(axis=0)
 
 
-def plan_roads(frame, parts, elev, abut=None, ext=None, pins=None, cuts=True, coarse=False, obs=None, decks=None):
+def plan_roads(frame, parts, elev, abut=None, ext=None, pins=None, cuts=True, coarse=False, obs=None, decks=None,
+               rings=None):
     """plan_road for many (lonlat, spec) parts with one elev call (its cost is per call); abut: per part (start, end)
     flags, the ends leading onto a bridge (fill_abutment); ext: per part (before, after), the lines (k, 2) in the frame
     from its start / end outward along the part the road goes on in (Grader._extensions), or None: their ground is in
@@ -510,7 +534,8 @@ def plan_roads(frame, parts, elev, abut=None, ext=None, pins=None, cuts=True, co
     road ending on a more smoothed one meets it at its height); obs(xy (m, 2), spec) -> measured heights (m,) of a
     part's samples (NaN where none) or None: they stand in for the DEM's (roadz.py, on coarse elevation: Grader._obs);
     decks: [(line (k, 2) in the frame, half width)] crossing over the roads, their ground read beside them
-    (deck_capped; not on coarse elevation). Pure given elev and obs."""
+    (deck_capped; not on coarse elevation); rings: per part, True for a mapped roundabout's ring (roads.is_ring: not
+    banked, RING_LEVEL_ON). Pure given elev and obs."""
     if not parts:
         return []
     ll = np.concatenate([lonlat for lonlat, _ in parts])
@@ -616,7 +641,8 @@ def plan_roads(frame, parts, elev, abut=None, ext=None, pins=None, cuts=True, co
             bank_after = bank_after[:0]
         bank_xy = np.concatenate([bank_before, xy, bank_after])
         out.append(_plan(xy, zx, spec, ab, (nb, na), step, bank_xy=bank_xy,
-                         bank_ext=(len(bank_before), len(bank_after))))
+                         bank_ext=(len(bank_before), len(bank_after)),
+                         banked=not (RING_LEVEL_ON and rings is not None and rings[j])))
     if SHARP_ON and cuts:           # (cuts False: the profile alone, Grader._stronger_z)
         _add_cuts(frame, [p if p is not None and sp.kind in roadsmod.BUILT else None
                           for p, (_ll, sp) in zip(out, parts)], elev)
@@ -722,9 +748,10 @@ def profile_sigma(spec):
     return max(SIGMA_M, CLASS_SIGMA_M.get(spec.cls, SIGMA_M)) if not getattr(spec, "link", False) else SIGMA_M
 
 
-def _plan(xy, z, spec, abut=(False, False), ext=(0, 0), step=PROFILE_STEP, bank_xy=None, bank_ext=None):
+def _plan(xy, z, spec, abut=(False, False), ext=(0, 0), step=PROFILE_STEP, bank_xy=None, bank_ext=None, banked=True):
     """ext: (before, after), samples of z past the part's ends (plan_roads): smoothed with it, then dropped. step: m
-    between the samples. bank_xy: the matching extended geometry, trimmed after the curvature/runoff pass."""
+    between the samples. bank_xy: the matching extended geometry, trimmed after the curvature/runoff pass. banked
+    False: level across (a roundabout's ring)."""
     built = spec.kind in roadsmod.BUILT
     zs = smooth_profile(median_profile(z, step, MEDIAN_M if built else DIRT_MEDIAN_M), step,
                         profile_sigma(spec))[ext[0]:len(z) - ext[1]]
@@ -741,7 +768,7 @@ def _plan(xy, z, spec, abut=(False, False), ext=(0, 0), step=PROFILE_STEP, bank_
     plan.max_wall = wall_max_h(spec)
     plan.steep = bool(getattr(spec, "mountain", False))
     bext = ext if bank_ext is None else bank_ext
-    b = bank(xy if bank_xy is None else bank_xy, spec, abut, bext)
+    b = bank(xy if bank_xy is None else bank_xy, spec, abut, bext) if banked else None
     if b is not None:
         if bank_xy is not None:
             b = b[bext[0]:len(bank_xy) - bext[1]]
@@ -767,6 +794,10 @@ BANK_STENCIL_M = 100.0      # 200 m baseline
 BANK_RUNOFF_M = 100.0       # full 8 % transition at <= 0.08 / 100 m away from ends
 BANK_FADE_M = 100.0         # smoothstep to level at a bridge / loose end; no deck-height changes
 BANK_SIGMA_M = 12.0         # remove discrete box-window steps in cross slope, not road elevation
+# ... but not a mapped roundabout's ring (roads.is_ring): the Jüri roundabout of Tallinna ringtee (59.3535 N 24.8820 E,
+# trunk, about 190 m across) was banked 8 % into the ring as a trunk's curve; the real one falls 2.4-2.9 % outward (the
+# Estonian lidar). Rings are graded level across. BNE_RING_LEVEL=off: banked as before.
+RING_LEVEL_ON = os.environ.get("BNE_RING_LEVEL", "on") != "off"
 
 
 def bank(xy, spec, abut=(False, False), ext=(0, 0)):
@@ -1410,12 +1441,18 @@ class _Planner:
         self.frame, self.md, self.elev, self.widths = frame, mapdata, elev, widths
         self.store, self.region = store, region
         self.cells = {}
+        self.pads = {}          # cell key -> [(centre, axis, half length, half width, pad z, blend m)] (P2.1)
+        self.pad_locks = {}     # cell key -> Lock: one thread makes a cell's pads, the others wait
         self.failed = {}        # cell key -> monotonic time of the last failed fetch
         self.lock = threading.Lock()
         self.key_locks = {}     # cell key -> Lock: one thread plans a cell, the others wait for it
         self.covers = {}        # cell key -> [(xy (k, 2), half width)]: the tunnels whose ground over them stays
         self.keeps = {}         # cell key -> [(xy (k, 2), half width)]: the UNGRADED roads' carriageways
         self.opens = {}         # cell key -> [(xy (k, 2), Spec)]: the tunnels' open sections (roads in the open)
+        self._cell_bytes = {}   # cell key -> its four entries' approximate bytes (the PLAN_MEM_MB budget)
+        self._cell_xy = {}      # cell key -> its centre (e, n) in the frame (the eviction's distance), or None
+        self._mem_bytes = 0     # the cells' bytes in all
+        self._center = None     # (e, n) of the last apply's/plans' points: the eviction keeps the cells near it
 
     # the store's settings (set on the anchors' Graders after they are made): shared: plancache.PlanCache (the cells'
     # plans shared with the server's other processes); wet(lat, lon) -> water depth (m): tunnels under water are left
@@ -1462,7 +1499,225 @@ class _Planner:
             self.keeps.setdefault(key, got[1])
             self.covers.setdefault(key, got[2])
             self.opens.setdefault(key, got[3])
+            self._keep_cell(key, protect=(key,))
             return self.cells[key]
+
+    @staticmethod
+    def _cell_nbytes(plans, keeps, covers, opens):
+        """The approximate bytes of one cell's four entries (the arrays; the Python around them is small)."""
+        n = 0
+        for _fid, p in plans:
+            n += p.xy.nbytes + p.z.nbytes
+            for a in (p.cut, p.bank, getattr(p, "widen", None)):
+                if a is not None:
+                    n += np.asarray(a).nbytes
+        for zones in (keeps, covers, opens):
+            for z in zones:
+                n += np.asarray(z[0]).nbytes
+        return n
+
+    def _keep_cell(self, key, protect=()):
+        """Account a freshly planned cell and evict over PLAN_MEM_MB (caller holds self.lock, the cell's four
+        entries are set already). Output never changes: an evicted cell re-plans deterministically and its plans
+        are on disk (plancache); protect: the cells of the running query (never those)."""
+        if key not in self._cell_bytes:
+            nb = self._cell_nbytes(self.cells.get(key, ()), self.keeps.get(key, ()), self.covers.get(key, ()),
+                                   self.opens.get(key, ()))
+            self._cell_bytes[key] = nb
+            self._mem_bytes += nb
+            box = self._clip_box(key)
+            self._cell_xy[key] = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2) if box else None
+        self._evict(protect)
+
+    def _evict(self, protect):
+        """The cells farthest from the last query's centre out, while over the budget (no centre: the oldest
+        planned first). Caller holds self.lock."""
+        protect = set(protect)
+        while self._mem_bytes > PLAN_MEM_MB * 1e6:
+            victim, best = None, -1.0
+            if self._center is None:
+                for k in self.cells:
+                    if k not in protect:
+                        victim = k          # the cells dict is insertion-ordered: the oldest first
+                        break
+            else:
+                ce, cn = self._center
+                for k in self.cells:
+                    if k in protect:
+                        continue
+                    xy = self._cell_xy.get(k)
+                    d = float("inf") if xy is None else max(abs(xy[0] - ce), abs(xy[1] - cn))
+                    if d > best:
+                        best, victim = d, k
+            if victim is None:
+                return
+            self._drop_cell(victim)
+
+    def _drop_cell(self, key):
+        """Forget a planned cell (re-planned on the next query, or read from the disk cache). Caller holds
+        self.lock."""
+        self.cells.pop(key, None)
+        self.keeps.pop(key, None)
+        self.covers.pop(key, None)
+        self.opens.pop(key, None)
+        self._cell_xy.pop(key, None)
+        self.pads.pop(key, None)
+        self.pad_locks.pop(key, None)
+        nb = self._cell_bytes.pop(key, None)
+        if nb is not None:
+            self._mem_bytes -= nb
+        memo = self.__dict__.get("_plan_sets")
+        if memo:
+            memo.clear()        # the merged Plan objects of the evicted cell would survive in the memo
+
+    def _note_center(self, lat, lon):
+        """Remember where the queries are (the eviction keeps the cells around the last one)."""
+        try:
+            e, n, _ = self.frame.geodetic_to_enu(np.array([float(np.mean(lat))]),
+                                                 np.array([float(np.mean(lon))]), 0.0)
+            with self.lock:
+                self._center = (float(np.asarray(e)[0]), float(np.asarray(n)[0]))
+        except Exception:       # (a points/frame edge case: the eviction falls back to the insertion order)
+            pass
+
+    def _cell_pads(self, key):
+        """[(centre (2,), axis (2,), half length, half width, pad z, blend m)] of cell key's parking lots (the
+        infrastructure layer) and buildings: each footprint's oriented box at the median of the ground under it
+        (underground and level<0 buildings and sheds skipped), made once per planner. The pad is flat; the ground
+        returns to the natural one over the blend (a 1:2 slope). Lots first, buildings after (a building wins)."""
+        with self.lock:
+            got = self.pads.get(key)
+            lock = self.pad_locks.setdefault(key, threading.Lock())
+        if got is not None:
+            return got
+        with lock:
+            with self.lock:
+                got = self.pads.get(key)
+            if got is not None:
+                return got
+
+            def feats_of(layer):
+                try:
+                    return self.md.cell(key, layers=(layer,), kind="demand").layers.get(layer)
+                except Exception as e:      # no pads rather than no grading (asked again with the next cell)
+                    log.debug("grading: %s of %s: %s: %s", layer, key, type(e).__name__, e)
+                    return None
+
+            def pad_of(xy, min_half, min_area, max_area, max_dz):
+                """The pad of a footprint ring xy ((k, 2) in the frame) or None (too small / large / steep)."""
+                xy = np.asarray(xy, np.float64)
+                if len(xy) < 4 or not np.isfinite(xy).all():
+                    return None
+                try:
+                    import buildings as buildingsmod
+                    c, u, hl, hw = buildingsmod.oriented_box(xy)
+                except Exception:
+                    return None
+                if min(hl, hw) < min_half or not (min_area <= 4.0 * hl * hw <= max_area):
+                    return None
+                v = np.array([-u[1], u[0]])
+                pts = np.array([c, c + u * hl + v * hw, c - u * hl + v * hw,
+                                c - u * hl - v * hw, c + u * hl - v * hw])
+                la, lo, _ = self.frame.enu_to_geodetic(pts[:, 0], pts[:, 1], 0.0)
+                try:
+                    zg = np.asarray(self.elev(la, lo), np.float64)
+                except Exception:
+                    return None
+                if not np.isfinite(zg).all():
+                    return None
+                pz = float(np.median(zg))
+                dz = float(np.max(np.abs(zg - pz)))
+                if dz > max_dz:
+                    return None
+                blend = float(np.clip(dz * BLD_PAD_BLEND_SLOPE, BLD_PAD_BLEND_MIN_M, BLD_PAD_BLEND_MAX_M))
+                return (c, u, float(hl), float(hw), pz, blend)
+
+            pads = []
+            lot_feats = feats_of("infrastructure")
+            if lot_feats is not None and len(lot_feats):
+                import parking as parkingmod
+                try:
+                    for ring in parkingmod.lot_rings(self.frame, [lot_feats]):
+                        p = pad_of(ring, LOT_PAD_MIN_HALF_M, LOT_PAD_MIN_AREA_M2, LOT_PAD_MAX_AREA_M2,
+                                   LOT_PAD_MAX_DZ_M)
+                        if p is not None:
+                            pads.append(p)
+                except Exception as e:
+                    log.debug("grading: lots of %s: %s: %s", key, type(e).__name__, e)
+            feats = feats_of("buildings")
+            if feats is not None and len(feats):
+                attrs = feats.attrs
+                under = attrs.get("is_underground")
+                levels = attrs.get("level")
+                for i in range(len(feats)):
+                    if under is not None and bool(under[i]):
+                        continue
+                    lvl = None
+                    if levels is not None:
+                        try:
+                            lvl = float(levels[i])
+                        except (TypeError, ValueError):
+                            lvl = None
+                    if lvl is not None and np.isfinite(lvl) and lvl < 0:
+                        continue        # below ground (a metro hall)
+                    parts = feats.parts(i)
+                    if not parts or not parts[0]:
+                        continue
+                    ring = np.asarray(parts[0][0], np.float64)
+                    if len(ring) < 4:
+                        continue
+                    try:
+                        ce, cn = mapgeom.enu_xy(feats, self.frame, ring)
+                    except Exception:
+                        continue
+                    p = pad_of(np.c_[np.asarray(ce, np.float64), np.asarray(cn, np.float64)],
+                               BLD_PAD_MIN_HALF_M, BLD_PAD_MIN_AREA_M2, BLD_PAD_MAX_AREA_M2, BLD_PAD_MAX_DZ_M)
+                    if p is not None:
+                        pads.append(p)
+            with self.lock:
+                self.pads[key] = pads
+                return pads
+
+    def _apply_pads(self, e, n, base, keys):
+        """base (k,) with every building pad among the cells keys applied: flat over the footprint's oriented box,
+        back to base over the blend. Called before grade_points, so a road keeps its own corridor."""
+        pads = []
+        for key in keys:
+            pads.extend(self._cell_pads(key))
+        if not pads or not len(e):
+            return base
+        out = np.array(base, np.float64, copy=True)
+        x0, y0, g = float(e.min()), float(n.min()), BLD_PAD_GRID_M
+        gi = np.floor((e - x0) / g).astype(np.int64)
+        gj = np.floor((n - y0) / g).astype(np.int64)
+        gkey = gi * np.int64(1 << 32) + gj              # (both non-negative: x0, y0 are the minima)
+        order = np.argsort(gkey, kind="stable")
+        sk = gkey[order]
+        starts = np.r_[0, np.flatnonzero(np.diff(sk)) + 1]
+        ends = np.r_[starts[1:], len(sk)]
+        grid = {int(sk[s]): order[s:c] for s, c in zip(starts, ends)}
+        for c, u, hl, hw, pz, blend in pads:
+            v = np.array([-u[1], u[0]])
+            corners = np.array([c + u * hl + v * hw, c + u * hl - v * hw,
+                                c - u * hl + v * hw, c - u * hl - v * hw])
+            lo, hi = corners.min(0) - blend, corners.max(0) + blend
+            gx0, gx1 = int(np.floor((lo[0] - x0) / g)), int(np.floor((hi[0] - x0) / g))
+            gy0, gy1 = int(np.floor((lo[1] - y0) / g)), int(np.floor((hi[1] - y0) / g))
+            for gx in range(gx0, gx1 + 1):
+                for gy in range(gy0, gy1 + 1):
+                    idx = grid.get(int(gx) * (1 << 32) + int(gy))
+                    if idx is None:
+                        continue
+                    dx = e[idx] - c[0]
+                    dy = n[idx] - c[1]
+                    du = np.maximum(np.abs(dx * u[0] + dy * u[1]) - hl, 0.0)
+                    dv = np.maximum(np.abs(dx * v[0] + dy * v[1]) - hw, 0.0)
+                    w = np.clip(1.0 - np.hypot(du, dv) / blend, 0.0, 1.0)
+                    hit = w > 0.0
+                    if hit.any():
+                        k = idx[hit]
+                        out[k] = base[k] + w[hit] * (pz - base[k])
+        return out
 
     def _cell_plans(self, key):
         with self.lock:
@@ -1506,6 +1761,7 @@ class _Planner:
             self.keeps.setdefault(key, keeps)
             self.covers.setdefault(key, covers)
             self.opens.setdefault(key, opens)
+            self._keep_cell(key, protect=(key,))
             return self.cells[key]
 
     def _make_cell(self, key):
@@ -1529,7 +1785,7 @@ class _Planner:
         plans = []
         if feats is not None and len(feats):
             specs = roadsmod.road_specs(feats, None, self.widths)
-            parts, ids, clipped = [], [], []
+            parts, ids, clipped, rings = [], [], [], []
             box = self._clip_box(key)
             keeps = []
             for i in range(len(feats)):
@@ -1547,6 +1803,7 @@ class _Planner:
                         parts.append((r, specs[i]))
                         ids.append(str(feats.ids[i]))
                         clipped.append(len(pieces) > 1 or r is not ring)
+                        rings.append(roadsmod.is_ring(feats, i))
             pspecs = []
             abut = None
             if (ABUT_FILL_ON or APPROACH_ON) and parts:
@@ -3709,6 +3966,7 @@ class _Planner:
 
     def plans(self, lat, lon, roads_only=False):
         """The Plans touching the points' area (each road once); roads_only: not the tunnels' (TUNNEL_TAG)."""
+        self._note_center(lat, lon)
         return self._plan_set(self._keys(lat, lon), roads_only)[0]
 
     @staticmethod
@@ -3767,6 +4025,7 @@ class _Planner:
         if base.size == 0:
             return base
         keys = self._keys(lat, lon)
+        self._note_center(lat, lon)
         if planned_only:
             with self.lock:
                 have = {k for k in keys if k in self.cells}
@@ -3780,20 +4039,27 @@ class _Planner:
             if not keys:
                 return base
         plans, pack = self._plan_set(keys, roads_only)
-        if not plans:
-            return base
         e, n, _ = self.frame.geodetic_to_enu(lat.ravel(), lon.ravel(), 0.0)
         e, n = np.asarray(e), np.asarray(n)
-        out = grade_points(e, n, base.ravel(), pack, lift)
+        base_flat = base.ravel()
+        if not planned_only:                # (the AI graph's wide window plans no buildings: no blocking fetch)
+            base_flat = self._apply_pads(e, n, base_flat, keys)
+        if not plans:
+            with self.lock:
+                self._evict(keys)
+            return base_flat.reshape(shape)
+        out = grade_points(e, n, base_flat, pack, lift)
         race = self._on_kept(e, n)
         if race is not None:                # (the terrain is a racetrack's surface: GitHub #143)
-            out[race] = base.ravel()[race]
+            out[race] = base_flat[race]
         keep = self._over_tunnels(e, n)
         if keep is not None:
             # (a small change stays: a road over the tunnel lies on its own graded profile, the ground over the tunnel
             # left ungraded under it stood a few cm over the E6's lanes as patches of bare ground, GitHub #2)
-            keep &= np.abs(out - base.ravel()) >= OVER_TUNNEL_SMALL_M
-            out[keep] = base.ravel()[keep]
+            keep &= np.abs(out - base_flat) >= OVER_TUNNEL_SMALL_M
+            out[keep] = base_flat[keep]
+        with self.lock:                 # the query is done: the cells far from it may go (PLAN_MEM_MB)
+            self._evict(keys)
         return out.reshape(shape)
 
     def open_tunnels(self, lat, lon):
@@ -3902,6 +4168,15 @@ class PlanStore:
     def planner_of_cell(self, key):
         import geotiles
         return self.planner(geotiles.region_of_cell(key))
+
+    def shrink(self, keep_regions):
+        """The planners of the regions not in keep_regions [(rx, ry)], dropped (a teleport's prune: their cells'
+        plans stay on disk in plancache, and a revisit re-makes the planner). Returns the count dropped."""
+        with self.lock:
+            gone = [r for r in self.planners if r not in keep_regions]
+            for r in gone:
+                del self.planners[r]
+        return len(gone)
 
     def planners_of(self, lat, lon):
         """[(planner, index array)] of the points' regions (most calls: one)."""

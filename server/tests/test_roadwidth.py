@@ -45,16 +45,16 @@ class MeasureTest(unittest.TestCase):
 class UseTest(unittest.TestCase):
     def test_measured_width_and_sidewalks(self):
         f = features([[(-300, 50), (300, 50)]], ["residential"])
-        widths = lambda fid, ll: (14.0, 3.6)
+        widths = lambda fid, ll: (7.0, 1.2)      # (within the residential cap: a walled street)
         sp = roads.road_specs(f, lambda la, lo: np.ones(np.shape(la), bool), widths)[0]
-        self.assertEqual((sp.width, sp.walk), (14.0, 3.6))
+        self.assertEqual((sp.width, sp.walk), (7.0, 1.2))
         walks = []
         roads.build_tile(FRAME, 0, 0, [f], flat, lambda la, lo: np.ones(np.shape(la), bool), walks=walks,
                          widths=widths)
         runs = [w for w in walks if "pts" in w]
-        self.assertTrue(runs and all(w["w"] == 3.6 for w in runs))
+        self.assertTrue(runs and all(w["w"] == 1.2 for w in runs))
         for w in runs:                          # the sidewalk centre: half the street + half the sidewalk out
-            self.assertAlmostEqual(abs(float(np.mean(w["pts"][:, 1])) - 50.0), 7.0 + 1.8, delta=0.3)
+            self.assertAlmostEqual(abs(float(np.mean(w["pts"][:, 1])) - 50.0), 3.5 + 0.6, delta=0.3)
         too_wide = lambda fid, ll: (60.0, 4.0)
         self.assertNotEqual(roads.road_specs(f, None, too_wide)[0].width, 60.0, "implausible: the default stays")
         svc = features([[(-300, 50), (300, 50)]], ["service"])

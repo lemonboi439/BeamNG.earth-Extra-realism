@@ -128,8 +128,8 @@ class ChunkCache:
     with the last; computing all of them every move took 2-10 s, more than the 2.2 s between moves at
     58 m/s, 2026-10-12). Exact: the heights are elementwise (surface_u). LRU, thread-safe."""
 
-    def __init__(self, cap=CHUNK_CACHE):
-        self.cap = cap
+    def __init__(self, cap=None):
+        self.cap = CHUNK_CACHE if cap is None else cap      # (budget.apply may have scaled it after the import)
         self.chunks = OrderedDict()             # (kx, ky) lattice chunk -> (CHUNK, CHUNK) float64 [j, i]
         self.lock = threading.Lock()
 

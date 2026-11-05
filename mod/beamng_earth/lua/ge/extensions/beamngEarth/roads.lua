@@ -6,9 +6,10 @@
 -- frame governor (kinds roadChunk / roadDelete). A new anchor makes every road of the old one go
 -- (the server sends the new frame's tiles again).
 --
--- Materials are stock ones from official levels, loaded at runtime from the player's own install
--- (nothing copied): West Coast USA's asphalt strip, sidewalks and lines, Johnson Valley's dirt road
--- tracks, Italy's cobblestone.
+-- Materials are the mod's own (tools/build_bne_assets.py generates every texture; no asset from another
+-- level): roads, sidewalks, curbs, lines and dirt in roads.materials.json, the rail and tunnel materials
+-- in tunnel.materials.json, and the buildings in buildings.materials.json. They keep the stock material
+-- names the server's chunks carry, so the world server and the mod agree without a version gate.
 --
 -- Raised sidewalks (curbs, sidewalk slabs): one mesh per tile (server/sidewalks.py, the way West
 -- Coast USA builds its sidewalks: one modelled mesh per district, with its `curbs` and `sidewalk1`
@@ -23,16 +24,10 @@ local stopwatch = require('beamngEarth/stopwatch')
 
 local M = {}
 
-M.MATERIAL_FILES = { '/levels/west_coast_usa/art/road/main.materials.json',
-  '/levels/east_coast_usa/art/road/main.materials.json',         -- ECA_road_edge_dirt (the asphalt's edge, roads.EDGE_DECAL)
-  '/levels/west_coast_usa/art/decals/main.materials.json',       -- roadmarkings1 (turn arrows, markings.ARROW_MATERIAL)
-  '/levels/west_coast_usa/art/shapes/roads/main.materials.json',   -- curbs, sidewalk1 (the sidewalk mesh)
-  '/levels/johnson_valley/art/decalroad/main.materials.json',
-  '/levels/italy/art/shapes/buildings/main.materials.json',        -- italy_cobblestone (paving stones)
-  '/levels/driver_training/art/road/main.materials.json',          -- m_metal_grid_drain (storm drains)
-  '/levels/gridmap_v2/art/shapes/grid/main.materials.json',        -- m_gm_concrete_plain (concrete streets)
-  '/levels/beamng_earth/art/shapes/beamngEarth/buildings.materials.json',  -- buildings (server/buildings.py)
-  '/levels/beamng_earth/art/shapes/beamngEarth/dirtroad.materials.json',   -- dirt / gravel strips (roads.DIRT_LOOK)
+M.MATERIAL_FILES = { '/levels/beamng_earth/art/shapes/beamngEarth/roads.materials.json',  -- own: every road surface
+  '/levels/beamng_earth/art/shapes/beamngEarth/tunnel.materials.json',      -- own: rail bed, decks, tunnel lining
+  '/levels/beamng_earth/art/shapes/beamngEarth/buildings.materials.json',   -- buildings (server/buildings.py)
+  '/levels/beamng_earth/art/shapes/beamngEarth/dirtroad.materials.json',    -- dirt / gravel strips (roads.DIRT_LOOK)
   -- highway signs (server/signstream.py: exit and overhead panels, mile markers, merge warnings)
   '/levels/beamng_earth/art/shapes/beamngEarth/roadside/exit.materials.json',
   '/levels/beamng_earth/art/shapes/beamngEarth/roadside/merge.materials.json',
@@ -322,7 +317,7 @@ local function dropTile(key)
   if t.walk then deleteQ[#deleteQ + 1] = t.walk end
   if t.road then deleteQ[#deleteQ + 1] = t.road end
   if t.deck then deleteQ[#deleteQ + 1] = t.deck end
-  for _, w in ipairs({ 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'tunnel', 'barrier', 'rail', 'railcol' }) do if t[w] then deleteQ[#deleteQ + 1] = t[w] end end
+  for _, w in ipairs({ 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'tunnel', 'railtunnel', 'barrier', 'rail', 'railcol' }) do if t[w] then deleteQ[#deleteQ + 1] = t[w] end end
   if t.wire then deleteQ[#deleteQ + 1] = t.wire end
   for _, w in ipairs(M.SIGN_WHATS) do if t[w] then deleteQ[#deleteQ + 1] = t[w] end end
   -- and its meshes not made yet (from KyzoFox's 1.5.4, PR #64): a tile sent again under the same key left its old
@@ -555,7 +550,7 @@ M.geoStats = { tiles = 0, kept = 0, replaced = 0, skins = 0, skinSwaps = 0, exac
 local geotile = require('beamngEarth/geotile')
 local geodesy = require('beamngEarth/geodesy')
 local anchorObj = nil       -- the current anchor (geodesy) the geotiles are placed into (M.update, onTile)
-M.CONTENT_WHATS = { 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'wire', 'tunnel', 'rail', 'railcol' }
+M.CONTENT_WHATS = { 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'wire', 'tunnel', 'railtunnel', 'barrier', 'rail', 'railcol' }
 M.SKIN_WHATS = { 'road', 'walk', 'walkcol' }
 
 local function geoKey(gkey) return 'g:' .. tostring(gkey) end
@@ -1134,7 +1129,7 @@ function M.onTile(msg, currentAnchor, a)
   local leanWalk = type(data.walkcol) == 'table' and data.walkcol.shape ~= nil
   local leanRail = type(data.railcol) == 'table' and data.railcol.shape ~= nil
   -- tunnels (server roadmesh.tunnel: tubes and portals) and railway tracks (server railways.py) collide like the decks
-  for _, what in ipairs({ 'walk', 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'tunnel', 'barrier', 'rail', 'railcol' }) do
+  for _, what in ipairs({ 'walk', 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'tunnel', 'railtunnel', 'barrier', 'rail', 'railcol' }) do
     local w = data[what]
     if type(w) == 'table' and w.shape and type(w.pos) == 'table' then
       local q = { key = key, walk = w, what = what, tile = tiles[key],
@@ -1553,7 +1548,7 @@ end
 M.GHOST_FAR_WAIT_S = 2      -- ... from this long after the rebase on
 local ghostSince = nil      -- stopwatch since the last rebase that left ghosts
 
-local WHATS = { 'walk', 'road', 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'wire', 'tunnel', 'barrier', 'rail', 'railcol',
+local WHATS = { 'walk', 'road', 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'wire', 'tunnel', 'railtunnel', 'barrier', 'rail', 'railcol',
   'exits', 'mileposts', 'merges', 'speeds' }
 
 function M.transform(xf, geodesy)
@@ -1958,7 +1953,7 @@ function M.nextWalk(q)
       end
     end
     if e.renderOnly or e.what == 'wire' then k = k + 1e6 end
-    if e.what == 'deck' or e.what == 'tunnel' then k = math.max(0, k - M.DRIVE_FIRST_M) end
+    if e.what == 'deck' or e.what == 'tunnel' or e.what == 'railtunnel' then k = math.max(0, k - M.DRIVE_FIRST_M) end
     if k < bestKey then best, bestKey = i, k end
   end
   return best
@@ -1972,7 +1967,7 @@ function M.urgentWalk(q)
   local reach = math.max(150, lastSpeed * M.URGENT_S) + M.TILE_M * 0.71
   local best, bd = nil, math.huge
   for i, e in ipairs(q) do
-    if e.what == 'deck' or e.what == 'tunnel' then
+    if e.what == 'deck' or e.what == 'tunnel' or e.what == 'railtunnel' then
       local t = tiles[e.key]
       if t and t.cx and not t.ghost and (not e.tile or e.tile == t) then
         local dx, dy = t.cx - p.x, t.cy - p.y

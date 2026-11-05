@@ -172,7 +172,7 @@ class DeckSidewalkScenarios(unittest.TestCase):
     deck wider by them, a concrete strip each side of the carriageway."""
 
     def test_city_street_bridge_carries_its_sidewalks(self):
-        f = features([[(-200, 0), (200, 0)]], ["residential"], flags=[(0, "is_bridge", 0.4, 0.6)], ids=["r0"])
+        f = features([[(-200, 0), (200, 0)]], ["tertiary"], flags=[(0, "is_bridge", 0.4, 0.6)], ids=["r0"])
         walk = roads.deck_walks(f, 0, roads.road_specs(f, urban))
         self.assertIsNotNone(walk)
         wm, sides = walk
@@ -197,7 +197,7 @@ class DeckSidewalkScenarios(unittest.TestCase):
         self.assertIsNone(roads.deck_walks(f, 0, roads.road_specs(f)), "rural: no sidewalks on the ground either")
 
     def test_a_road_all_bridge_takes_the_sidewalks_of_the_street_going_on(self):
-        f = features([[(-200, 0), (0, 0)], [(0, 0), (60, 0)]], ["residential"] * 2, flags=[(1, "is_bridge", 0.0, 1.0)],
+        f = features([[(-200, 0), (0, 0)], [(0, 0), (60, 0)]], ["tertiary"] * 2, flags=[(1, "is_bridge", 0.0, 1.0)],
                      ids=["r0", "r1"])
         specs = roads.road_specs(f, urban)
         self.assertIsNone(specs[1], "(all bridge: no ground spec)")

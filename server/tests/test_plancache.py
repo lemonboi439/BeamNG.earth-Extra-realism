@@ -42,7 +42,7 @@ class PlanCacheTest(unittest.TestCase):
         md = FakeMD(f)
         b = self.grader(md)                     # (another process: its own Grader over the same cache)
         zb = b.apply(la, lo, np.zeros(50))
-        self.assertEqual(md.calls, 0, "no road data fetched: the plans came from the cache")
+        self.assertEqual(md.road_calls, 0, "no road data fetched: the plans came from the cache")
         self.assertGreater(b.shared.stats["read"], 0)
         self.assertTrue(np.array_equal(za, zb))
         self.assertTrue(np.array_equal(self.grader(FakeMD(f), shared=False).apply(la, lo, np.zeros(50)), za),
@@ -56,7 +56,7 @@ class PlanCacheTest(unittest.TestCase):
         md = FakeMD(f)
         b = self.grader(md)
         zb = b.apply(la, lo, np.zeros(50))
-        self.assertEqual(md.calls, 0, "planned in the last run: read from the revisit cache")
+        self.assertEqual(md.road_calls, 0, "planned in the last run: read from the revisit cache")
         self.assertTrue(np.array_equal(za, zb))
 
     def test_has(self):

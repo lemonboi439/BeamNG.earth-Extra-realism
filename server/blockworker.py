@@ -173,7 +173,7 @@ def _trace_memory(every_s=60.0, top=10):
 
 
 def init(cache_dir, offline, roads, grading, road_widths, surface, warm_q, log_level=logging.INFO, airports=False,
-         sea=False, nice=0, roads_in_ground=None, gas_stations=False):
+         sea=False, nice=0, roads_in_ground=None, gas_stations=False, road_surface=None):
     """nice: this worker's niceness on top of the server's (earthd NICE_*): the terrain blocks' workers keep the
     server's own, the road tiles' and the far field's run below them, so the ground under the car wins the server's
     few cores (2026-10-19: at 180 mph the next block waited 6 s behind the road tiles ahead and a ball fell off the
@@ -184,6 +184,9 @@ def init(cache_dir, offline, roads, grading, road_widths, surface, warm_q, log_l
     if roads_in_ground is not None:
         import roads as roadsmod
         roadsmod.ROADS_IN_GROUND = roads_in_ground
+    if road_surface is not None:            # (detail mode: paved carriageways as lane meshes over the drawn photo)
+        import roads as roadsmod
+        roadsmod.ROAD_SURFACE = bool(road_surface)
     import budget
     try:
         budget.lower_priority(nice, worker=True)    # (Windows: the server's class, as inherited)
@@ -627,11 +630,13 @@ def _stack_watch(what):
 def _roads_tile_cached(aid, lat, lon, zoom, tx, ty, out_dir, vfs_dir, sidewalks, lift, buildings, left_hand, mph, q,
                        gas_stations, buried, lamp_region, country=None):
     import revisit
+    import roads as roadsmod
     import threedmr
     k = revisit.key("roads", round(float(lat), 7), round(float(lon), 7), zoom, tx, ty, bool(sidewalks), float(lift),
                     bool(buildings), bool(left_hand), bool(mph), None if q is None else float(q), bool(gas_stations),
                     _s.md.versions() if _s.md is not None else None, float(buried), lamp_region, country,
-                    threedmr.FEATURE_VERSION, threedmr.local_signature(os.path.dirname(out_dir)))
+                    threedmr.FEATURE_VERSION, threedmr.local_signature(os.path.dirname(out_dir)),
+                    bool(roadsmod.ROAD_SURFACE))
     wh = _where_enu(lat, lon, *roadsmod_tile_bbox(tx, ty),
                     sidewalks=bool(sidewalks), lift=float(lift), buildings=bool(buildings),
                     gas_stations=bool(gas_stations), md=_md_versions())
@@ -939,10 +944,14 @@ def _tile_parts(mark, frame, tile, zoom, g, buildings, left_hand, mph, gas_stati
     rr_kits = railways.crossing_props(frame, tx, ty, rcells, rground, left_hand, fra_kits)   # level crossings
     if rr_kits:
         props = (props or []) + rr_kits
+    P.rtube = []                    # the rail tunnels' tube chunks (roadmesh.tunnel)
     P.rmesh = railways.tile_mesh(frame, tx, ty, rcells, rground,
                                  far_ground=railways.point_ground(
                                      frame, lambda la, lo: ground(frame, la, lo, _s.dem.sample(la, lo, zoom)),
-                                     ("raw",) + tuple(rkey)))
+                                     ("raw",) + tuple(rkey)),
+                                 wet=_s.sea.depth if getattr(_s, "sea", None) is not None else None,
+                                 tube_out=P.rtube)
+    P.rtmesh = roadmeshmod.tunnel(P.rtube, (x0, y0, 0.0)) if P.rtube else None
     mark("railways")
     bld = None
     garage_sound = ()
@@ -1016,7 +1025,8 @@ def _roads_tile(aid, lat, lon, zoom, tx, ty, out_dir, vfs_dir, sidewalks, lift, 
                               P.bld, P.props, P.wires, P.park, tunnel_mesh=P.tmesh, fuel=P.fuel, rail_mesh=P.rmesh,
                               guardrail_rows=P.guardrail_rows, garage_sound=P.garage_sound,
                               custom_entries=P.custom_entries, wells=P.wells, bld_none=bool(buildings),
-                              barrier_mesh=P.barrier_mesh, barrier_chunks=P.barrier_chunks) + (P.fuel_pads,)
+                              barrier_mesh=P.barrier_mesh, barrier_chunks=P.barrier_chunks,
+                              rail_tunnel=P.rtmesh, rail_tube=P.rtube) + (P.fuel_pads,)
     mark("write")
     return out
 
@@ -1028,7 +1038,7 @@ GEO_FRAMES_KEPT = 64        # geotile frames' grading views kept per process (_f
 GEO_INPUTS_KEPT = 96        # geotiles' skin inputs kept in memory per process (_skin_inputs)
 EXACT_TOL_COL_M = 0.03      # m a colliding part placed rigidly may be off before it gets its exact variant ...
 EXACT_TOL_M = 0.10          # ... and a render-only part
-GEO_COLLIDING = ("bldcol", "deck", "tunnel", "railcol", "rail", "barrier")    # parts the car hits ("bld*" too without a bldcol)
+GEO_COLLIDING = ("bldcol", "deck", "tunnel", "railtunnel", "railcol", "rail", "barrier")    # parts the car hits ("bld*" too without a bldcol)
 _geo_lock = threading.Lock()
 _geo_graders = {}           # (lat0, lon0) -> grading.Grader view of a geotile's frame
 _geo_inputs = {}            # geotile key -> its skin inputs (dict), the most recently used last
@@ -1117,7 +1127,8 @@ def _write_geo_content(out_dir, vfs_dir, tile, P):
                                    guardrail_rows=P.guardrail_rows, garage_sound=P.garage_sound,
                                    custom_entries=getattr(P, "custom_entries", None), wells=P.wells,
                                    decals=False, barrier_mesh=getattr(P, "barrier_mesh", None),
-                                   barrier_chunks=getattr(P, "barrier_chunks", ()))
+                                   barrier_chunks=getattr(P, "barrier_chunks", ()),
+                                   rail_tunnel=P.rtmesh, rail_tube=P.rtube)
         with open(os.path.join(tmpdir, f"roads_0_{tile}_None.json"), encoding="utf-8") as f:
             data = json.loads(f.read())
         files = roadsmod.shape_files(0, tile, None)
@@ -1174,10 +1185,11 @@ def _geo_content_key(key, zoom, buildings, left_hand, mph, gas_stations, buried,
     check, earthd.Server.geo_prebuilt; models_dir: the folder of the 3dmr.eu models' cache, whose local models are
     built in: threedmr.local_signature)."""
     import revisit
+    import roads as roadsmod
     import threedmr
     return revisit.key("roadsg", str(key), int(zoom), bool(buildings), bool(left_hand), bool(mph), bool(gas_stations),
                        _md_versions() if md is None else md, float(buried), lamp_region, country, GEO_SKIN_MARGIN_M,
-                       threedmr.FEATURE_VERSION, threedmr.local_signature(models_dir))
+                       threedmr.FEATURE_VERSION, threedmr.local_signature(models_dir), bool(roadsmod.ROAD_SURFACE))
 
 
 def prebuild_geo(gx, gy, zoom, scratch, buildings, left_hand, mph, gas_stations, buried=0.0, lamp_region=None,
@@ -1684,18 +1696,32 @@ def _open_tunnels(g, keep):
 
 
 def _tunnel_holes(aid, frame, elev, keep, cx, cy, idx, info, g=None):
-    """idx with the block's tunnel portals as holes (roads.block_tunnel_holes); info["tunnelHoles"]: how many."""
+    """idx with the block's tunnel portals as holes (roads.block_tunnel_holes and the rail bores',
+    railways.block_tunnel_holes); info["tunnelHoles"]: how many."""
     import roads as roadsmod
     if getattr(_s, "md", None) is None:     # no map data (roads off): no tunnels
         return idx
+
+    def cell_fn(key):
+        return _s.md.cell(key, layers=("roads",), kind="demand").layers.get("roads")
+    holes = None
     try:
-        holes = roadsmod.block_tunnel_holes(
-            tunnel_profiles(aid, frame, elev, g),
-            lambda key: _s.md.cell(key, layers=("roads",), kind="demand").layers.get("roads"),
-            frame, keep, cx, cy, heightmap.SQUARE)
+        holes = roadsmod.block_tunnel_holes(tunnel_profiles(aid, frame, elev, g), cell_fn, frame, keep, cx, cy,
+                                            heightmap.SQUARE)
     except Exception:                   # no holes rather than no block
         log.exception("tunnel holes of block (%s, %s)", cx, cy)
-        return idx
+    try:
+        import railways
+        half = keep["u"].shape[0] * heightmap.SQUARE / 2
+        box = (cx - half, cy - half, cx + half, cy + half)
+        rcells = [cell_fn(k) for k in railways.cells_near(frame, box)]
+        rh = railways.block_tunnel_holes(frame, rcells, keep, cx, cy, heightmap.SQUARE,
+                                         railways.point_ground(frame, elev),
+                                         _s.sea.depth if getattr(_s, "sea", None) is not None else None)
+        if rh is not None:
+            holes = rh if holes is None else (holes | rh)
+    except Exception:
+        log.exception("rail tunnel holes of block (%s, %s)", cx, cy)
     if holes is None or not holes.any():
         return idx
     idx = np.zeros(holes.shape, np.uint8) if idx is None else idx
@@ -1722,16 +1748,20 @@ def tunnel_profiles(aid, frame, elev, g=None):
 
 def far_buildings_tile(aid, lat, lon, zoom, tx, ty, out_dir, vfs_dir, lamp_region=None):
     """earthd.Server.build_far_bld_tile here (road-tile pool): buildings.far_tile (from the revisit cache when built in
-    this anchor's place before)."""
+    this anchor's place before), on the anchor's graded ground (the near tiles' heights and rules: no jump at the
+    640 m ring)."""
     import buildings as buildingsmod
     import revisit
     frame = geodesy.EnuFrame(lat, lon)
     k = revisit.key("bldfar", round(float(lat), 7), round(float(lon), 7), zoom, tx, ty,
                     _s.md.versions() if _s.md is not None else None, lamp_region)
+    g, _ = _s.anchor(aid, lat, lon)
+
+    def elev(la, lo):
+        z = ground(frame, la, lo, _s.dem.sample(la, lo, zoom))
+        return g.apply(la, lo, z, gradingmod.ROAD_LIFT) if g is not None else z
     return _revisit_tile("bldfar", k, aid, tx, ty, out_dir, vfs_dir, f"bldfar_{aid}_{tx}_{ty}.json",
-                         lambda: buildingsmod.far_tile(frame, tx, ty, _s.md,
-                                                       lambda la, lo: ground(frame, la, lo, _s.dem.sample(la, lo, zoom)),
-                                                       out_dir, vfs_dir, aid, lamp_region),
+                         lambda: buildingsmod.far_tile(frame, tx, ty, _s.md, elev, out_dir, vfs_dir, aid, lamp_region),
                          lambda res: {"n": int(res[1])},
                          lambda path, extra: (path, int(extra.get("n", 0))),
                          _where_enu(lat, lon, *roadsmod_tile_bbox(tx, ty), md=_md_versions()))
@@ -1739,7 +1769,7 @@ def far_buildings_tile(aid, lat, lon, zoom, tx, ty, out_dir, vfs_dir, lamp_regio
 
 def skyline_tile(aid, lat, lon, zoom, ux, uy, out_dir, vfs_dir, lamp_region=None):
     """earthd.Server.build_sky_tile here (the far buildings' pool): buildings.skyline_tile (from the revisit cache when
-    built in this anchor's place before)."""
+    built in this anchor's place before), on the anchor's graded ground."""
     import buildings as buildingsmod
     import revisit
     frame = geodesy.EnuFrame(lat, lon)
@@ -1748,10 +1778,14 @@ def skyline_tile(aid, lat, lon, zoom, ux, uy, out_dir, vfs_dir, lamp_region=None
     u = buildingsmod.SKY_UNIT
     sx0, sy0, _, _ = roadsmod_tile_bbox(ux * u, uy * u)
     _, _, sx1, sy1 = roadsmod_tile_bbox(ux * u + u - 1, uy * u + u - 1)
+    g, _ = _s.anchor(aid, lat, lon)
+
+    def elev(la, lo):
+        z = ground(frame, la, lo, _s.dem.sample(la, lo, zoom))
+        return g.apply(la, lo, z, gradingmod.ROAD_LIFT) if g is not None else z
     return _revisit_tile("bldsky", k, aid, ux, uy, out_dir, vfs_dir, f"bldsky_{aid}_{ux}_{uy}.json",
-                         lambda: buildingsmod.skyline_tile(frame, ux, uy, _s.md,
-                                                           lambda la, lo: ground(frame, la, lo, _s.dem.sample(la, lo, zoom)),
-                                                           out_dir, vfs_dir, aid, lamp_region),
+                         lambda: buildingsmod.skyline_tile(frame, ux, uy, _s.md, elev, out_dir, vfs_dir, aid,
+                                                           lamp_region),
                          lambda res: {"n": int(res[1])},
                          lambda path, extra: (path, int(extra.get("n", 0))),
                          _where_enu(lat, lon, sx0, sy0, sx1, sy1, md=_md_versions()))
@@ -1852,16 +1886,22 @@ def _far_geo_build(kind, tile, gzoom, out_dir, vfs_dir, lamp_region):
 
     def raw(la, lo):
         return ground(None, la, lo, _s.dem.sample(la, lo, gzoom))
+
+    def graded(la, lo):
+        # (the near geotile content's and the anchor tiles' ground: pads and road grading, no jump at the seam)
+        g = _frame_grader(frame)
+        z = raw(la, lo)
+        return g.apply(la, lo, z, gradingmod.ROAD_LIFT) if g is not None else z
     data = {"v": 1, "key": tile.key, "frame": [float(frame.lat0), float(frame.lon0)]}
     names = far_geo_names(kind, tile.key)
     shapes = {}
     if kind == "bldfar":
-        items, lamps, _box = buildingsmod.far_items(frame, tile, None, _s.md, raw, lamp_region)
+        items, lamps, _box = buildingsmod.far_items(frame, tile, None, _s.md, graded, lamp_region)
         mesh = buildingsmod.build(items, lite=True)
         n = len(items)
     elif kind == "bldsky":
         keys = roadsmod.cells_of_tile(frame, tile, None, margin=0.0)
-        got = buildingsmod.sky_items(frame, (x0, y0, x1, y1), sorted(keys, key=str), _s.md, raw, lamp_region,
+        got = buildingsmod.sky_items(frame, (x0, y0, x1, y1), sorted(keys, key=str), _s.md, graded, lamp_region,
                                      own=tile.box)
         if got is None:
             return None

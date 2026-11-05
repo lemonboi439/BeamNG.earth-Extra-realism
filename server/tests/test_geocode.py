@@ -18,8 +18,10 @@ class FakeNet:
     def __init__(self):
         self.urls = []
 
-    def get(self, url, kind="demand", lane=None):
+    def get(self, url, kind="demand", headers=None, lane=None):
         self.urls.append(url)
+        if headers is not None:
+            self.headers = headers
         self.lane = lane
         return types.SimpleNamespace(body=b'{"features": []}')
 
@@ -39,6 +41,12 @@ class LangForTest(unittest.TestCase):
         self.assertEqual(geocode.lang_for("IT"), "it")
         for cc in ("US", "CZ", "PL", "NL", "SI", None, ""):
             self.assertEqual(geocode.lang_for(cc), "en", cc)
+
+    def test_search_uses_a_browser_user_agent(self):
+        net = FakeNet()
+        geocode.search("fells point", 39.2904, -76.6122, net=net)
+        self.assertTrue(str(net.headers.get("User-Agent", "")).startswith("Mozilla/"),
+                        "Photon 403s the project User-Agent")
 
     def test_search_picks_it_up(self):
         net = FakeNet()
@@ -135,8 +143,9 @@ class Answers:
         self.table = table
         self.urls = []
 
-    def get(self, url, kind="demand", lane=None):
+    def get(self, url, kind="demand", lane=None, headers=None):
         self.urls.append(url)
+        self.headers = headers
         for part, answer in self.table.items():
             if part in url:
                 if isinstance(answer, Exception):
@@ -208,10 +217,10 @@ class SourcesTest(unittest.TestCase):
 
     def test_a_slow_source_does_not_hold_the_rest(self):
         class Slow(Answers):
-            def get(self, url, kind="demand", lane=None):
+            def get(self, url, kind="demand", lane=None, headers=None):
                 if "photon" in url:
                     time.sleep(0.5)
-                return super().get(url, kind, lane)
+                return super().get(url, kind, lane, headers)
         with mock.patch.object(geocode, "TYPING_DEADLINE_S", 0.1):
             net = Slow({"wikipedia": wikipedia_answer("Ganter Bridge")})
             t = time.monotonic()

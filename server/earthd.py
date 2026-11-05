@@ -2936,17 +2936,30 @@ class Server:
         return roadsmod.ChainView(cs, anchor.frame)
 
     def _tunnel_holes(self, anchor, elev, keep, cx, cy, idx, info):
-        """idx with the block's tunnel portals as holes (roads.block_tunnel_holes; blockworker._tunnel_holes)."""
+        """idx with the block's tunnel portals as holes (roads.block_tunnel_holes and the rail bores',
+        railways.block_tunnel_holes; blockworker._tunnel_holes)."""
         g = self.grader_for(anchor)       # (before grader_lock: it takes it)
         if self.mapdata is None:
             return idx
         cell_fn = lambda key: self.mapdata.cell(key, layers=("roads",), kind="demand").layers.get("roads")   # noqa: E731
+        holes = None
         try:
             self.tunnels_of(anchor, elev, g)
             holes = roadsmod.block_tunnel_holes(anchor.tunnels, cell_fn, anchor.frame, keep, cx, cy, heightmap.SQUARE)
         except Exception:
             log.exception("tunnel holes of block (%s, %s)", cx, cy)
-            return idx
+        try:
+            import railways
+            half = keep["u"].shape[0] * heightmap.SQUARE / 2
+            box = (cx - half, cy - half, cx + half, cy + half)
+            rcells = [cell_fn(k) for k in railways.cells_near(anchor.frame, box)]
+            rh = railways.block_tunnel_holes(anchor.frame, rcells, keep, cx, cy, heightmap.SQUARE,
+                                             railways.point_ground(anchor.frame, elev),
+                                             self.sea.depth if self.sea is not None else None)
+            if rh is not None:
+                holes = rh if holes is None else (holes | rh)
+        except Exception:
+            log.exception("rail tunnel holes of block (%s, %s)", cx, cy)
         if holes is None or not holes.any():
             return idx
         idx = np.zeros(holes.shape, np.uint8) if idx is None else idx
@@ -4442,11 +4455,68 @@ class Server:
             for stem in ANCHOR_TILE_FILES:
                 doomed += glob.glob(os.path.join(self.out_dir, f"{stem}_{aid}_*"))
             self.queue_delete(p for p in dict.fromkeys(doomed) if os.path.exists(p))
+        self._shrink_after_prune()
         if retry:
             self.schedule_prune(keep_from)
 
+    def _shrink_after_prune(self):
+        """prune() dropped old anchors: the caches' entries far from every kept one go too (they re-read from
+        their disk caches or re-fetch on demand), the allocator's freed pages are handed back, and the road pool
+        is restarted when a worker still holds far more than its caches can account for — every worker keeps its
+        own copies of all of these, which a prune of the server's own cannot reach (2026-11-04 RAM overhaul:
+        a teleport left DEM/MapData/plans/widths/sea/imagery untouched and nothing trimmed after)."""
+        spots = [(a.lat, a.lon) for a in self.anchors.values()
+                 if getattr(a, "lat", None) is not None and getattr(a, "lon", None) is not None]
+        if not spots:
+            return
+        import math
+
+        import budget
+
+        def tile_near(z, x, y):
+            n = 2.0 ** int(z)
+            lon = (x + 0.5) / n * 360.0 - 180.0
+            lat = math.degrees(math.atan(math.sinh(math.pi * (1.0 - 2.0 * (y + 0.5) / n))))
+            return any(geodesy.haversine_m(lat, lon, la, lo) <= PRUNE_KEEP_M for la, lo in spots)
+        dropped = {}
+        if getattr(self.dem, "shrink", None) is not None:
+            dropped["dem"] = self.dem.shrink(tile_near)
+        if getattr(self.imagery, "shrink", None) is not None:
+            dropped["imagery"] = self.imagery.shrink(lambda _s, z, x, y: tile_near(z, x, y))
+        if getattr(self.mapdata, "shrink", None) is not None:
+            def cell_near(cell):
+                try:
+                    lon0, lat0, lon1, lat1 = cell.bounds()
+                except Exception:
+                    return True                     # (an unknown key shape: kept)
+                return any(geodesy.haversine_m((lat0 + lat1) / 2, (lon0 + lon1) / 2, la, lo) <= PRUNE_KEEP_M
+                           for la, lo in spots)
+            dropped["mapdata"] = self.mapdata.shrink(cell_near)
+        if getattr(self.sea, "shrink", None) is not None:
+            dropped["sea"] = self.sea.shrink(lambda x, y: tile_near(mapcells.ZOOM, x, y))
+        if getattr(self.road_widths, "shrink", None) is not None:
+            dropped["widths"] = self.road_widths.shrink()
+        store = getattr(self, "plan_store", None)
+        if getattr(store, "shrink", None) is not None:
+            import geotiles
+            dropped["plan_regions"] = store.shrink({geotiles.region_of(la, lo) for la, lo in spots})
+        budget.trim()                               # (the freed pages back: glibc malloc_trim / Windows wset)
+        pool = self.road_pool
+        if (pool is not None and hasattr(pool, "recycle") and hasattr(pool, "worst_rss_mb")
+                and getattr(pool, "inflight", 0) == 0):
+            worst = pool.worst_rss_mb()
+            if worst is not None and worst > WORKER_RECYCLE_RSS_MB:
+                pool.recycle(f"a road worker held {worst:.0f} MB after a teleport's prune")
+                dropped["road_pool"] = f"recycled ({worst:.0f} MB)"
+        if any(v for v in dropped.values() if v != 0):
+            log.info("prune: caches shrunk: %s", {k: v for k, v in dropped.items() if v})
+
 
 # Per-anchor tile files (besides far_ / hm_) that prune() deletes with their anchor
+PRUNE_KEEP_M = 30000.0          # a prune keeps the caches' entries within this of every kept anchor (a planning
+                                # region is ~30 km: the new place's cells stay, the teleported-from place goes)
+WORKER_RECYCLE_RSS_MB = 1200.0  # a road worker over this after a prune restarts its pool (its own caches, plus
+                                # the freed memory its threads' arenas kept, are out of the server's reach)
 # A teleport's first block is built first without the road grading (make_provisional: the car is placed in ~5 s
 # instead of 15-60 s on a fresh place) and replaced by the graded one when that is built (terrain_refresh)
 PROVISIONAL_FIRST = os.environ.get("BNGE_PROVISIONAL", "1") != "0"
@@ -4482,7 +4552,7 @@ BOOST_FULL_MAX_S = 300.0    # full priority loading (Server.load_boost's telepor
 # (rs / rx: the road geotiles' skins and exact variants of the anchor; rail / railcol / tunnel: its road tiles' rail and
 # tunnel shapes. Left out until 2026-11-02: kept until the server stopped, GitHub #599's 9 GB session folder)
 ANCHOR_TILE_FILES = ("roads", "road", "walks", "walkcol", "deck", "bld", "bldcol", "bldfar", "wire", "veg", "navgraph",
-                     "rs", "rx", "rail", "railcol", "tunnel")
+                     "rs", "rx", "rail", "railcol", "railtunnel", "tunnel")
 
 
 class _BoundedLru:
@@ -7098,6 +7168,9 @@ async def main_async(args):
         import atexit
         atexit.register(netstatemod.close)
     block_pools, far_pool, photo_pool = [], None, None
+    road_surface = args.near_visual == "detail" and args.roads == "on" \
+        and os.environ.get("BNGE_ROAD_SURFACE", "1") != "0"      # (A/B: BNGE_ROAD_SURFACE=0 keeps the painted look)
+    roadsmod.ROAD_SURFACE = road_surface    # (the server's own threads with --block-process off; the workers get it below)
     plancachemod.start_run(args.cache_dir)      # (before the workers: they inherit the run's id)
     if args.block_process == "on":
         ctx = multiprocessing.get_context("spawn")
@@ -7113,7 +7186,8 @@ async def main_async(args):
                           args.grading == "on" and args.roads == "on",
                           args.road_widths == "on" and args.roads == "on", args.surface == "on", warm_q,
                           logging.getLogger().level, args.airports == "on", args.sea == "on", 0,
-                          roadsmod.ROADS_IN_GROUND, args.gas_stations == "on" and args.roads == "on")), warm_q))
+                          roadsmod.ROADS_IN_GROUND, args.gas_stations == "on" and args.roads == "on",
+                          road_surface)), warm_q))
         if args.near_visual == "detail" and (os.cpu_count() or 0) >= PHOTO_PROCESS_MIN_CPUS:
             # requested blocks' photos and stand-ins in a process of their own (Server._base_process / _stand_in)
             photo_pool = poolsmod.RespawningPool(
@@ -7122,14 +7196,15 @@ async def main_async(args):
                           args.grading == "on" and args.roads == "on",
                           args.road_widths == "on" and args.roads == "on", args.surface == "on", None,
                           logging.getLogger().level, args.airports == "on", args.sea == "on", 0,
-                          roadsmod.ROADS_IN_GROUND, args.gas_stations == "on" and args.roads == "on"))
+                          roadsmod.ROADS_IN_GROUND, args.gas_stations == "on" and args.roads == "on",
+                          road_surface))
         far_pool = poolsmod.RespawningPool(
             "far tile", args.workers, mp_context=ctx, initializer=blockworker.init,
             initargs=(args.cache_dir, args.offline, args.roads == "on",
                       args.grading == "on" and args.roads == "on",
                       args.road_widths == "on" and args.roads == "on", False, None,
                       logging.getLogger().level, args.airports == "on", args.sea == "on", NICE_FAR,
-                      roadsmod.ROADS_IN_GROUND))
+                      roadsmod.ROADS_IN_GROUND, road_surface))
     if far_pool is not None:
         # compute sharing: far tiles to helpers (--peers) and, in a BeamMP group, split with the players on our anchor,
         # built with the same settings as these workers (peerwork.py)
@@ -7152,14 +7227,14 @@ async def main_async(args):
             "road tile", args.road_processes, mp_context=ctx, initializer=blockworker.init,
             initargs=(args.cache_dir, args.offline, True, args.grading == "on", args.road_widths == "on",
                       args.surface == "on", None, logging.getLogger().level,
-                      args.airports == "on", args.sea == "on", NICE_ROADS, roadsmod.ROADS_IN_GROUND))
+                      args.airports == "on", args.sea == "on", NICE_ROADS, roadsmod.ROADS_IN_GROUND, road_surface))
     far_bld_pool = None
     if road_pool is not None and args.buildings == "on":
         far_bld_pool = poolsmod.RespawningPool(   # far building tiles (blockworker.far_buildings_tile)
             "far building", 1, mp_context=ctx, initializer=blockworker.init,
             initargs=(args.cache_dir, args.offline, True, args.grading == "on", args.road_widths == "on",
                       args.surface == "on", None, logging.getLogger().level,
-                      args.airports == "on", args.sea == "on", NICE_FAR_BUILDINGS, roadsmod.ROADS_IN_GROUND))
+                      args.airports == "on", args.sea == "on", NICE_FAR_BUILDINGS, roadsmod.ROADS_IN_GROUND, road_surface))
     server = Server(args.user_dir, args.cache_dir, args.workers, kfun, args.hysteresis, args.far_radius, fmt,
                     imagery=args.imagery, near_visual=args.near_visual, tex_near=args.tex_near,
                     tex_far=args.tex_far, tone=args.tone, near_radii=radii,

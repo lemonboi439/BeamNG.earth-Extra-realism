@@ -415,7 +415,7 @@ class Underwater(unittest.TestCase):
 
     def setup(self, wet_from_m):
         from test_roads import features, FRAME, LON, M_LON
-        f = features([[(-200, 0), (0, 0)], [(0, 0), (200, 0)]], ["primary", "primary"],
+        f = features([[(-2000, 0), (0, 0)], [(0, 0), (2000, 0)]], ["primary", "primary"],
                      flags=[(0, "is_tunnel"), (1, "is_tunnel")])
         tp = roads.TunnelProfiles(FRAME, lambda key: f, lambda la, lo: np.full(np.shape(la), 30.0))
         tp.wet = lambda la, lo: np.where((np.asarray(lo) - LON) * M_LON > wet_from_m, 8.0, 0.0)
@@ -435,7 +435,7 @@ class Underwater(unittest.TestCase):
                         "the grader's question gets the same answer")
 
     def test_a_dry_tunnel_stays(self):
-        tp, f = self.setup(1000.0)              # no water near it
+        tp, f = self.setup(5000.0)              # no water near it
         box = (-256.0, -64.0, 256.0, 64.0)
         self.assertTrue(tp.parts([f], box) or tp.open_parts([f], box))
         self.assertFalse(self.fresh(tp, f).drowned((str(f.ids[0]), 0), roads.tunnel_parts(f, 0)[0]))
@@ -449,10 +449,25 @@ class Underwater(unittest.TestCase):
 
     def test_a_long_tunnel_under_a_river_goes(self):
         # the Burnley Tunnel: 70 m under the Yarra in 3.2 km (2 %): under the share, but under water in its middle
-        from test_roads import LON, M_LON
-        tp, f = self.one_piece(lambda la, lo: np.where(np.abs((np.asarray(lo) - LON) * M_LON) < 20, 6.0, 0.0))
+        from test_roads import features, FRAME, LON, M_LON
+        f = features([[(-1500, 0), (1500, 0)]], ["motorway"], flags=[(0, "is_tunnel")])
+        tp = roads.TunnelProfiles(FRAME, lambda key: f, lambda la, lo: np.full(np.shape(la), 30.0))
+        tp.wet = lambda la, lo: np.where(np.abs((np.asarray(lo) - LON) * M_LON) < 20, 6.0, 0.0)
         box = (-256.0, -64.0, 256.0, 64.0)
         self.assertEqual(tp.parts([f], box) + tp.open_parts([f], box), [])
+
+    def test_a_short_city_river_tunnel_is_built_under_the_water(self):
+        # Rotherhithe Tunnel: 1.48 km under the Thames; short enough to be a tube (TUNNEL_WET_MIN_LEN_M), its floor
+        # laid under the water-covered ground; long underwater tunnels still go (the test above)
+        from test_roads import features, FRAME, LON, M_LON
+        f = features([[(-300, 0), (300, 0)]], ["primary"], flags=[(0, "is_tunnel")])
+        tp = roads.TunnelProfiles(FRAME, lambda key: f, lambda la, lo: np.full(np.shape(la), 30.0))
+        tp.wet = lambda la, lo: np.where(np.abs((np.asarray(lo) - LON) * M_LON) < 100, 6.0, 0.0)
+        parts = tp.parts([f], (-400.0, -64.0, 400.0, 64.0))
+        self.assertTrue(parts, "a short river crossing stays a tunnel")
+        z = np.asarray(parts[0][3], np.float64)
+        self.assertLess(float(np.nanmin(z)), 26.0, "the floor is laid under the water-covered ground")
+        self.assertGreater(float(z[0]), 28.0, "the portal stays at the ground")
 
     def test_a_mountain_lake_far_over_a_deep_tunnel_is_no_river(self):
         # the Gotthard road tunnel: one pond ~900 m over it left all 17 km out (2026-10-28)

@@ -5,7 +5,9 @@
 -- centre), its volume DEPTH_M / 2 below.
 local M = {}
 
-M.DEPTH_M = 200         -- the blocks' z scale: water down to 100 m below the surface (sea floors <= 80 m)
+M.DEPTH_M = 200         -- fallback z scale when the server sends no per-tile depth (water down to 100 m below the
+                        -- surface). A tile's depth now reaches just under its sampled bed, so tunnels under a river
+                        -- (rail bores, the Underground) stay outside the water volume.
 M.CREATE_PER_FRAME = 4  -- tiles made per frame (a full set of ~50 in under a second, no hitch)
 M.NUDGE_SPEED = 1.0     -- m/s: a car slower than this inside a new tile is re-placed where it is, so its
                         -- physics sees the water (a parked car only notices water when it moves)
@@ -69,12 +71,12 @@ local function riverSpeeds(flow)
 end
 
 local TEXTURES = {      -- field, East Coast's file, the stock fallback (0.40 moved them from /core/art/water to /assets)
-  { 'rippleTex', '/levels/east_coast_usa/art/water/ripple3.dds', '/assets/materials/tileable/water/water_effects/ripple_nm.normal.dds' },
+  { 'rippleTex', '/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_water_ripple_nm.normal.png', '/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_water_ripple_nm.normal.png' },
   -- (2026-10-15: the ramp is a .png in East Coast USA, and neither fallback existed: ~1000 "texture missing" log
   -- errors per session that filled the log's 15000 lines before the end of a drive)
-  { 'depthGradientTex', '/levels/east_coast_usa/art/water/depthcolor_ramp.png',
-    '/assets/materials/tileable/water/depthcolor_ramp/river_depthcolor_ramp_b.png' },
-  { 'foamTex', '/levels/east_coast_usa/art/water/foam.dds', '/assets/materials/tileable/water/water_effects/foam_b.color.dds' },
+  { 'depthGradientTex', '/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_water_depth_ramp.png',
+    '/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_water_depth_ramp.png' },
+  { 'foamTex', '/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_water_foam_b.color.png', '/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_water_foam_b.color.png' },
 }
 
 local want = nil         -- { anchorId, tiles = { key -> tile }, rivers = { key -> river } } from the server
@@ -172,9 +174,10 @@ local function setGridSize(o, size)
   o:setField('gridSize', 0, tostring(math.max(1, math.floor(math.min(100, size)))))
 end
 
-local function makePhys(p, z)
+local function makePhys(p, z, depth)
   removePhys()
   local o = createObject('WaterBlock')
+  depth = tonumber(depth) or M.DEPTH_M
   setGridSize(o, M.PHYS_SIZE)
   for _, f in ipairs(FIELDS) do o:setField(f[1], f[2], f[3]) end
   -- the textures too, though it is never drawn: without them each move logged "Texture missing: " (an empty name)
@@ -182,17 +185,18 @@ local function makePhys(p, z)
   for _, x in ipairs(TEXTURES) do o:setField(x[1], 0, exists(x[2]) and x[2] or x[3]) end
   o:setField('gridElementSize', 0, tostring(M.PHYS_SIZE / 16))
   o:setPosition(vec3(p.x, p.y, z))
-  o:setScale(vec3(M.PHYS_SIZE, M.PHYS_SIZE, M.DEPTH_M))
+  o:setScale(vec3(M.PHYS_SIZE, M.PHYS_SIZE, depth))
   o.canSave = false
   o:registerObject(M.PHYS_NAME)
   if scenetree.MissionGroup then scenetree.MissionGroup:addObject(o) end
   if o.setRenderEnabled then o:setRenderEnabled(false) end
-  phys = { id = o:getId(), x = p.x, y = p.y, z = z }
+  phys = { id = o:getId(), x = p.x, y = p.y, z = z, depth = depth }
   M.physMade = M.physMade + 1
 end
 
 local function create(key, t)
   local o = createObject('WaterBlock')
+  local depth = tonumber(t.depth) or M.DEPTH_M
   setGridSize(o, t.size)
   for _, f in ipairs(FIELDS) do o:setField(f[1], f[2], f[3]) end
   if key:sub(1, 1) == 'L' then
@@ -207,7 +211,7 @@ local function create(key, t)
   end
   o:setPosition(vec3(t.x, t.y, t.z))
   -- a little larger than its square: tilted neighbours meet without a hairline gap (2026-10-13)
-  o:setScale(vec3(t.size + M.TILE_OVERLAP_M, t.size + M.TILE_OVERLAP_M, M.DEPTH_M))
+  o:setScale(vec3(t.size + M.TILE_OVERLAP_M, t.size + M.TILE_OVERLAP_M, depth))
   -- after the scale: the engine warns ("gridSize cannot be > scale", meaning this one) when it exceeds the scale, 100 m
   -- before setScale (an 8 km tile's 128 m, 2026-10-17)
   o:setField('gridElementSize', 0, tostring(math.max(4, t.size / 64)))
@@ -228,7 +232,7 @@ function M.onMessage(msg)
   for _, r in ipairs(type(msg.tiles) == 'table' and msg.tiles or {}) do
     if type(r) == 'table' and #r >= 7 then
       tiles[tostring(r[1])] = { x = tonumber(r[2]), y = tonumber(r[3]), z = tonumber(r[4]), size = tonumber(r[5]),
-        nx = tonumber(r[6]), ny = tonumber(r[7]) }
+        nx = tonumber(r[6]), ny = tonumber(r[7]), depth = tonumber(r[8]) or M.DEPTH_M }
     end
   end
   local rivers = {}
@@ -302,9 +306,14 @@ function M.update(anchorId, player)
     else
       -- the tile's (tilted) surface under the player: a river falls across its tile
       local z = t.z - (t.nx or 0) * (player.x - t.x) - (t.ny or 0) * (player.y - t.y)
-      if (physStale and n == 0) or not phys or math.abs(player.x - phys.x) > M.PHYS_SIZE / 2 - M.PHYS_MARGIN
-          or math.abs(player.y - phys.y) > M.PHYS_SIZE / 2 - M.PHYS_MARGIN or math.abs(z - phys.z) > 0.05 then
-        makePhys(player, z)
+      local depth = t.depth or M.DEPTH_M
+      if player.z < z - depth / 2 - 1 then
+        -- under the block's bed (a rail or road tunnel under the river): no water volume around the car
+        if phys then removePhys() end
+      elseif (physStale and n == 0) or not phys or math.abs(player.x - phys.x) > M.PHYS_SIZE / 2 - M.PHYS_MARGIN
+          or math.abs(player.y - phys.y) > M.PHYS_SIZE / 2 - M.PHYS_MARGIN or math.abs(z - phys.z) > 0.05
+          or math.abs(depth - (phys.depth or depth)) > 0.05 then
+        makePhys(player, z, depth)
         physStale = false
         if player.z < z + 1 then nudge = true end      -- in the water: its physics must take this one
       end

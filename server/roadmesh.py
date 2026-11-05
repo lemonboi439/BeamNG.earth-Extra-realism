@@ -936,6 +936,7 @@ def build(frame, chunks, elev, origin, lift=0.0, clip=None, follow=False, q=None
             mats.append(m)
         mi = mats.index(m)
         tu = float(c.get("tu") or 1.0)          # ("tu": the texture's repeats across, else once)
+        u0 = float(c.get("u0") or 0.0)          # ("u0": its u at the ribbon's left edge: a lane's slice of the decal)
         fu = 0.0                                # a strip's feather: this share of its width each side (EDGE_FADE_M)
         slen = c.get("slen")
         if slen and fz is None:
@@ -947,13 +948,13 @@ def build(frame, chunks, elev, origin, lift=0.0, clip=None, follow=False, q=None
             zl, zr = z[:k], z[k:]
             xy = np.concatenate((left, left + (right - left) * fu, right + (left - right) * fu, right))[:, :2]
             P.append(np.c_[xy, np.concatenate((zl, (1.0 - fu) * zl + fu * zr, fu * zl + (1.0 - fu) * zr, zr))])
-            UV.append(np.column_stack((np.repeat(np.array([0.0, fu, 1.0 - fu, 1.0]) * tu, k), np.tile(v, 4))))
+            UV.append(np.column_stack((u0 + np.repeat(np.array([0.0, fu, 1.0 - fu, 1.0]) * tu, k), np.tile(v, 4))))
             tri = np.concatenate([_quads(nverts, k, row, row + 1) for row in range(3)])
             nrows = 4
         else:
             xy = np.concatenate([left, right])[:, :2]
             P.append(np.c_[xy, z])
-            UV.append(np.column_stack((np.concatenate((np.zeros(k), np.full(k, tu))), np.concatenate((v, v)))))
+            UV.append(np.column_stack((np.concatenate((np.full(k, u0), np.full(k, u0 + tu))), np.concatenate((v, v)))))
             tri = _quads(nverts, k, 0, 1)
             nrows = 2
         # where a ribbon folds over itself (a mitred joint at a sharp merge pulls its edges across: the user saw

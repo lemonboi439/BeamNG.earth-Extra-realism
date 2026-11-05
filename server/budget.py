@@ -81,35 +81,97 @@ def small(gb=None):
 
 SMALL_FACTS_CELLS = 192         # roads._FACTS_MEM entries on a small machine (~24 cells; a Steam Deck: ~9 server processes)
 
+# --- every machine's caches scale with its RAM (2026-11-04 overhaul) -------------------------------------------
+# The desktop sizes are per-process constants (dem 512 MB, mapdata 192, seacarve ~228, roadwidth ~140, heightmap
+# 64-128, imagery ~330, facts ~48, deshadow ~32: ~1.5 GB a process in all), and the process count is the multiplier:
+# a desktop's server held 13-17 GB in its 11-12 processes (budget's own note below; the user's Folkestone->London
+# run measured headlessly at a 15.0 GB peak, docs/overhaul/ram-baseline.csv). Every process now gets the same share
+# of the machine's RAM: CACHE_RAM_SHARE of it over the layout's process count (proc_count), and each module's
+# constant is scaled by one factor against its desktop size (_scaled), never below its floor: the small profile's
+# floors are the measured Steam-Deck minima (the sea floors and the imagery tiles keep the desktop sizes there:
+# smaller, the Deck spent minutes re-reading them from disk), the desktop floors are half the desktop size.
+FAR_WORKERS_DESKTOP = 3     # far-tile processes (earthd --workers' default) on a desktop
+LAYOUT_FIXED_PROCS = 5      # main + block request + block prefetch + photo + far building (earthd's pools)
+CACHE_RAM_SHARE = 0.20      # of the machine's RAM all server processes' caches together may hold
+DESKTOP_CACHE_MB = 1550.0   # the desktop per-process constants' sum: the scale's reference
+CACHE_MIN_MB = 224.0        # a process's cache budget at least this (whatever the machine)
+CACHE_MAX_MB = 1600.0       # ... and at most ~the desktop sizes (a 96 GB machine with 12 processes keeps them)
+FLOORS_SMALL = {"dem": SMALL_DEM_TILES, "mapdata": SMALL_MAPDATA_MB, "walls": SMALL_WALL_CELLS,
+                "facts": SMALL_FACTS_CELLS, "fin": SMALL_FIN_MB, "decoded": SMALL_FIN_DECODED,
+                "sea": 24, "img": 512,           # (the Deck's measured keep-theirs, the module comment above)
+                "combos": 6, "chunks": 128, "deshadow": 128, "plans": 12}
+FLOORS_DESKTOP = {"dem": 256, "mapdata": 96, "walls": 24, "facts": 320, "fin": 80, "decoded": 192,
+                  "sea": 12, "img": 256, "combos": 16, "chunks": 256, "deshadow": 256, "plans": 16}
+
+
+def proc_count(cpus=None, gb=None):
+    """The server processes of this machine's layout (earthd's pools): the road tiles (road_processes), the far
+    tiles (--workers), and the five fixed ones (main, both block lanes, photo, far building)."""
+    return (road_processes(cpus, gb) + LAYOUT_FIXED_PROCS
+            + (SMALL_FAR_WORKERS if small(gb) else FAR_WORKERS_DESKTOP))
+
+
+def cache_mb(gb=None, cpus=None):
+    """A process's cache budget in MB: CACHE_RAM_SHARE of the machine's RAM over its process count."""
+    gb = total_gb() if gb is None else gb
+    per = (gb or 32.0) * 1000.0 * CACHE_RAM_SHARE / max(1, proc_count(cpus, gb))
+    return min(CACHE_MAX_MB, max(CACHE_MIN_MB, per))
+
+
+def cache_scale(gb=None, cpus=None):
+    """The factor every desktop cache constant is scaled by (cache_mb() / DESKTOP_CACHE_MB)."""
+    return cache_mb(gb, cpus) / DESKTOP_CACHE_MB
+
+
+def _scaled(desktop, floor, s):
+    return int(min(desktop, max(floor, round(desktop * s))))
+
 
 def apply(is_small=None):
-    """Set the cache sizes of this process's modules for the profile; returns whether it is the small one."""
+    """Set the cache sizes of this process's modules for the machine and the profile; returns whether it is the
+    small one. Called in each process before its caches are made; idempotent (every size derives from the module
+    constants here, not from a previous call's)."""
     is_small = small() if is_small is None else is_small
     global SHED_MB
     SHED_MB = SMALL_SHED_MB if is_small else 0
     if os.environ.get("BNGE_SHED_MB"):              # (A/B: the ceiling in MB, 0 off)
         SHED_MB = int(os.environ["BNGE_SHED_MB"])
+    s = cache_scale()
+    F = FLOORS_SMALL if is_small else FLOORS_DESKTOP
+    import dem
+    import deshadow
+    import grading
+    import heightmap
+    import imagery
+    import mapdata
+    import roadwidth
+    import roads
+    import seacarve
+    dem.MEM_TILES = _scaled(512, F["dem"], s)               # decoded 512² float32 DEM tiles (1 MB each)
+    mapdata.MEM_MB = _scaled(192, F["mapdata"], s)          # decoded cell layers (byte LRU)
+    seacarve.MEM_CELLS = _scaled(24, F["sea"], s)           # sea-floor rasters (~9.5 MB each)
+    roadwidth.WALL_CELLS = _scaled(48, F["walls"], s)       # cells of building walls (also on disk)
+    roadwidth.COMBOS = _scaled(32, F["combos"], s)          # wall sets of a cell's edge neighbours
+    heightmap.CHUNK_CACHE = _scaled(512, F["chunks"], s)    # 128²-sample lattice chunks (128 KB each)
+    imagery.MEM_TILES = _scaled(512, F["img"], s)           # decoded 256² RGB source tiles (192 KB each)
+    imagery.MEM_DECODED = _scaled(384, F["decoded"], s)     # finished tiles also decoded (192 KB each)
+    deshadow.MEM_TILES = _scaled(512, F["deshadow"], s)     # relit tiles (uint8 256²)
+    roads.FACTS_MEM_KEPT = _scaled(640, F["facts"], s)      # road-facts entries (~75 KB each; also on disk)
+    grading.PLAN_MEM_MB = _scaled(32, F["plans"], s)        # a planner's cells' budget (P1.2's eviction)
+    gb = total_gb() or 16.0
     if is_small:
-        import dem
+        imagery.MEM_FINISHED_MB = int(min(160, max(F["fin"], round(FIN_MB_PER_GB * gb))))
         import farfield
-        import mapdata
-        import roadwidth
-        dem.MEM_TILES = SMALL_DEM_TILES
-        mapdata.MEM_MB = SMALL_MAPDATA_MB
-        roadwidth.WALL_CELLS = SMALL_WALL_CELLS
-        import roads
-        roads.FACTS_MEM_KEPT = SMALL_FACTS_CELLS   # (~0.5 MB a city cell's facts, in each process)
-        import imagery
-        gb = total_gb() or 16.0
-        imagery.MEM_FINISHED_MB = int(min(imagery.MEM_FINISHED_MB, max(SMALL_FIN_MB, round(FIN_MB_PER_GB * gb))))
-        imagery.MEM_DECODED = min(imagery.MEM_DECODED, SMALL_FIN_DECODED)
         for cells, table in farfield.K_TABLE.items():       # (read when the server makes its Layout)
             farfield.K_TABLE[cells] = {lvl: k * SMALL_FAR_K for lvl, k in table.items()}
         for cells, tex in farfield.TEX_DEFAULT.items():
             farfield.TEX_DEFAULT[cells] = tuple(min(t, SMALL_FAR_TEX) for t in tex)
+    else:
+        imagery.MEM_FINISHED_MB = _scaled(160, F["fin"], s)  # the finished pyramid's JPEGs (~44 KB each)
     # every machine: a desktop's server held 13-17 GB in its eleven processes (1-1.5 GB a worker, mostly freed memory
     # its 40-65 threads' arenas kept), next to the game; a 32 GB PC with 4 cores swapped (GitHub #496, 2026-10-30)
     _malloc_small()
+    _win_trim()
     return is_small
 
 
@@ -232,11 +294,100 @@ def _malloc_small():
     threading.Thread(target=loop, daemon=True, name="malloc-trim").start()
 
 
+def _win_trim():
+    """Windows (opt-in, BNGE_TRIM=1): every TRIM_S the process's working set is handed back (EmptyWorkingSet: the
+    pages go to the standby list, and the hot ones fault back warm). On by default it made every server process
+    (12 here) empty its working set every 20 s: a soft-fault storm that lagged the whole PC and did not lower the
+    committed memory (2026-11-04). `trim()` still runs after a prune, where handing pages back is wanted."""
+    global _trimming
+    if sys.platform != "win32" or _trimming or os.environ.get("BNGE_TRIM", "0") != "1":
+        return
+    import ctypes
+    import threading
+    import time
+    try:
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetCurrentProcess.restype = ctypes.c_void_p
+        psapi.EmptyWorkingSet.argtypes = [ctypes.c_void_p]
+    except OSError:
+        return
+
+    def loop():
+        h = k32.GetCurrentProcess()
+        while True:
+            time.sleep(TRIM_S)
+            try:
+                psapi.EmptyWorkingSet(h)
+            except OSError:
+                return
+    _trimming = True
+    threading.Thread(target=loop, daemon=True, name="wset-trim").start()
+
+
+def rss_mb(pid=None):
+    """A process's working set in MB (this process by default); None when it cannot be read."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            class PMC(ctypes.Structure):
+                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                            ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                            ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            k32.CloseHandle.argtypes = [wintypes.HANDLE]
+            psapi = ctypes.WinDLL("psapi")
+            psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(PMC), wintypes.DWORD]
+            psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+            if pid is None:
+                h, close = k32.GetCurrentProcess(), False
+            else:
+                k32.OpenProcess.restype = wintypes.HANDLE
+                k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                h = k32.OpenProcess(0x0400 | 0x0010, False, int(pid))   # QUERY_INFORMATION | VM_READ
+                close = True
+            if not h:
+                return None
+            try:
+                c = PMC()
+                c.cb = ctypes.sizeof(PMC)
+                if psapi.GetProcessMemoryInfo(h, ctypes.byref(c), c.cb):
+                    return c.WorkingSetSize / 1e6
+            finally:
+                if close:
+                    k32.CloseHandle(h)
+        else:
+            with open(f"/proc/{pid if pid is not None else 'self'}/statm") as f:
+                return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") / 1e6
+    except Exception:
+        pass
+    return None
+
+
 def trim():
-    """Give the freed memory back now (glibc; nothing elsewhere)."""
-    libc = _libc() if sys.platform.startswith("linux") else None
-    if libc is not None and hasattr(libc, "malloc_trim"):
-        libc.malloc_trim(0)
+    """Give the freed memory back now (glibc malloc_trim; Windows: the working set; nothing elsewhere)."""
+    if sys.platform.startswith("linux"):
+        libc = _libc()
+        if libc is not None and hasattr(libc, "malloc_trim"):
+            libc.malloc_trim(0)
+    elif sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+        try:
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            psapi = ctypes.WinDLL("psapi")
+            psapi.EmptyWorkingSet.argtypes = [wintypes.HANDLE]
+            psapi.EmptyWorkingSet.restype = wintypes.BOOL
+            psapi.EmptyWorkingSet(k32.GetCurrentProcess())
+        except OSError:
+            pass
 
 
 # Windows has no niceness: priority classes. The server's own (earthd --nice, default 10) is "below normal"; its workers

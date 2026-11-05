@@ -33,8 +33,8 @@ NOSE = 0.025            # m: the bevelled nose, down from the top ...
 NOSE_W = 0.045          # ... and in from the face
 CURB_W = 0.15           # m of curb top band
 CROSS_SLOPE = 0.015     # sidewalk cross slope, rising away from the road
-CURB_REPEAT_M = 9.0     # m of curb per texture width (3 joints of 3 m)
-SLAB_REPEAT_M = 45.0    # m of sidewalk per texture width (4096 px, a 205 px strip ~ 2.25 m)
+CURB_REPEAT_M = 3.0     # m of curb per texture width (one joint: the mod's own curb texture)
+SLAB_REPEAT_M = 3.0     # m of sidewalk per texture width (one joint every 3 m, as poured concrete walks)
 MATERIALS = ("curbs", "sidewalk1", "tactile_indicator",  # West Coast USA (art/shapes/roads), loaded by the mod
              "bne_sidewalk_brick")                       # red brick pavers (buildings.materials.json)
 BRICK = 3

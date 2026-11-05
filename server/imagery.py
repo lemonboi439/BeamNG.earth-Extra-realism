@@ -1299,6 +1299,22 @@ class Imagery:
             while self._fin_bytes > self.mem_finished and len(self._fin) > 1:
                 self._fin_bytes -= self._fin.popitem(last=False)[1].nbytes()
 
+    def shrink(self, keep):
+        """The cached tiles keep(source, z, x, y) is False for, dropped from the decoded LRU and both finished
+        caches (a teleport's prune: the old place's pyramid re-reads from disk on demand). Returns the count."""
+        with self._lock:
+            n = 0
+            for k in [k for k in self._lru if not keep(*k)]:
+                del self._lru[k]
+                n += 1
+            for k in [k for k in self._fin if not keep(*k)]:
+                self._fin_bytes -= self._fin.pop(k).nbytes()
+                n += 1
+            for k in [k for k in self._fin_rgb if not keep(*k)]:
+                del self._fin_rgb[k]
+                n += 1
+        return n
+
     def finished(self, keys, pending=None):
         """{(source, z, x, y): Finished, or None (no data there: 404, outside the coverage probes, a lazy tile not
         fetched)} of source tiles: from memory, else from disk (the finished pyramid), else made from the raw tile

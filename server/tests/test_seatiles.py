@@ -57,7 +57,13 @@ class PlanTest(unittest.TestCase):
             self.assertAlmostEqual(t.nx, t.x / seatiles.EARTH_R)
         far = max(tiles, key=lambda t: math.hypot(t.x, t.y))
         self.assertAlmostEqual(far.z, -(far.x ** 2 + far.y ** 2) / (2 * seatiles.EARTH_R), delta=0.05)
-        self.assertEqual(len(tiles[0].to_msg()), 7)
+        self.assertEqual(len(tiles[0].to_msg()), 8)
+        self.assertEqual(tiles[0].depth, seatiles.WATER_Z_DEFAULT_M, "no ground sampled: the fallback volume")
+        with_ground = seatiles.plan(f, 0.0, 0.0, east, ground_at=lambda la, lo, s: np.full(np.shape(la), -10.0))
+        self.assertTrue(with_ground)
+        for t in with_ground:
+            self.assertAlmostEqual(t.depth, 2.0 * (10.0 + seatiles.WATER_FLOOR_M), places=6,
+                                   msg="the volume ends under the bed, not 100 m down (a tunnel under it stays dry)")
 
     def test_land_under_the_sea_is_not_flooded(self):
         # GitHub #8: the polders by the coast (land 4 m under the sea) were under the sea's tiles

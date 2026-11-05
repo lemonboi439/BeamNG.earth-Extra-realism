@@ -27,7 +27,7 @@ ON = os.environ.get("BNE_RAILTAGS", "on") != "off"
 SHARD_ZOOM = 7
 MANIFEST_TTL_S = 24 * 3600      # the build in use is checked again after this long
 RETRY_S = 3600                  # unreachable: asked again after this long
-COLUMNS = ("railway", "gauge", "electrified", "service", "usage")
+COLUMNS = ("railway", "gauge", "electrified", "service", "usage", "tunnel", "bridge", "layer")
 
 
 def way_id(record):

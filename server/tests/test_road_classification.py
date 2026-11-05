@@ -30,7 +30,6 @@ class UrbanSamplingTest(unittest.TestCase):
         sp = roads.road_specs(f, self.cover_with_isolated_endpoint_sites)[0]
         self.assertFalse(sp.urban)
         self.assertEqual(sp.width, roads.carriageway("secondary", "paved", False))
-        self.assertGreater(roads.carriageway("secondary", "paved", True), sp.width)
 
     def test_source_vertex_clustering_does_not_change_classification(self):
         sparse = features([[(0., 0.), (400., 0.)]], ["secondary"])
@@ -123,7 +122,8 @@ class ActualHorseCreekTest(unittest.TestCase):
             sp = roads.road_specs(f, s.urban)[0]
             self.assertFalse(sp.urban)
             self.assertEqual(sp.width, 8.)
-            self.assertEqual(roads.carriageway("secondary", "paved", True), 12.1)
+            # (urban is no wider than rural by invented parking lanes: the class width is the carriageway)
+            self.assertEqual(roads.carriageway("secondary", "paved", True), roads.STYLE["secondary"][0])
             self.assertFalse(roads.has_sidewalks(sp))
         finally:
             s.close()
@@ -136,7 +136,7 @@ class ActualHorseCreekTest(unittest.TestCase):
             with mock.patch.object(roads, "URBAN_BESIDE_SHARE", .35):
                 conservative = roads._road_specs(f, s.urban, False)[0]
             self.assertTrue(permissive.urban)
-            self.assertEqual(permissive.width, 10.8)
+            self.assertEqual(permissive.width, 6.2, "the mapped width, no invented parking lanes either way")
             self.assertFalse(conservative.urban)
             self.assertEqual(conservative.width, 6.2)
             self.assertFalse(roads.has_sidewalks(conservative))
