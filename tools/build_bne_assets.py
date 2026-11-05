@@ -79,7 +79,8 @@ def _dds(name, rgb, srgb):
     img = np.clip(np.asarray(rgb) * 255.0 + 0.5, 0, 255).astype(np.uint8)
     if img.ndim != 3 or img.shape[0] != img.shape[1] or (img.shape[0] & (img.shape[0] - 1)):
         return                          # (the 1-D depth ramp stays a PNG)
-    chain = _bc7.mips(img)
+    # BC7 is 4x4-blocked: the engine rejects a compressed DDS whose mips are smaller than 4 pixels, so stop there
+    chain = [m for m in _bc7.mips(img) if m.shape[0] >= 4]
     body = b"".join(_bc7.encode(m) for m in chain)
     w = h = img.shape[0]
     flags = 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000 | 0x80000
@@ -118,6 +119,9 @@ def tex(tag, base, albedo=None, normal_h=None, roughness=None, n_strength=2.0):
     h = normal_h if normal_h is not None else noise(rgb.shape[:2], 6, tag + ":nm", 3)
     save(f"t_bne_{tag}_nm.normal.png", normal_map(h, n_strength), srgb=False)
     r = roughness if roughness is not None else 0.7 + 0.15 * noise(rgb.shape[:2], 10, tag + ":r", 3)
+    r = np.asarray(r, np.float64)
+    if r.ndim == 0:                     # (a flat roughness: one value per texel, not a 1-pixel image)
+        r = np.full(rgb.shape[:2], float(r))
     save(f"t_bne_{tag}_r.data.png", gray(np.clip(r, 0, 1)), srgb=False)
 
 
