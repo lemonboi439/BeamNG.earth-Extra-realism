@@ -52,11 +52,13 @@ SERVER_PORT = 47613         # earthd's default
 GAME_GONE_S = 30            # no game process this long: the game closed (wait_for_game) ...
 GAME_RESTART_WINDOW_S = 120  # ... while it starts (Steam's container restarts it then); after that GAME_CLOSED_S:
 GAME_CLOSED_S = 5           # the launcher sat 30 s after the player closed the game (the user, 2026-11-04)
-WINDOWS_GAME_GONE_S = 3     # Windows has no Steam container restart gap; allow prompt relaunch
+WINDOWS_GAME_GONE_S = 8     # Windows has no Steam container restart gap; prompt, but a few queries long (a player's
+                            # launcher closed with the game still running, 2026-11-05: see game_pids)
 GAME_START_S = 180          # waiting for the game's process after asking Steam
 SERVER_START_S = 120        # imports/startup must finish before the game is launched
 PROCESS_QUERY_S = 10        # a process query under 100 % server load took over 3 s and the launcher read the game as
                             # closed, stopping its server (Old Kent Road, 2026-11-06): a stuck query may not hang it
+GAME_QUERY_S = 10           # tasklist for the game: slow on a loaded machine (the game and the server on 6 cores)
 DIRECT_FAIL_S = 20          # a direct start that ends this soon did not work (no Steam client): through Steam
 
 
@@ -423,21 +425,22 @@ def windows_game_main_pids(pids):
 
 
 def game_pids():
-    """The game's main processes (not its CEF helpers)."""
+    """The game's main processes (not its CEF helpers); None when Windows could not be asked (unknown)."""
     if IS_WIN:
         # bytes, decoded leniently: on a non-English Windows tasklist's "no tasks" message is in the console's code
         # page (German "ü" = 0x81 in cp850), which text=True's cp1252 could not decode (a player's report,
         # 2026-10-17: the launcher stopped with UnicodeDecodeError and r.stdout None)
+        # (None, not []: a query that failed or ran out of time does not say the game is gone.)
         r = None
         for _attempt in range(2):
             try:
                 r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {GAME_EXE_WIN}", "/FO", "CSV", "/NH"],
-                                   capture_output=True, timeout=PROCESS_QUERY_S)
+                                   capture_output=True, timeout=GAME_QUERY_S)
                 break
             except subprocess.TimeoutExpired:
                 continue
             except OSError:
-                return []
+                return None
         if r is None:               # (both queries timed out under load: unknown, not "closed")
             return None
         text = (r.stdout or b"").decode("utf-8", errors="replace")
@@ -494,8 +497,11 @@ def game_connected():
 
 
 def game_alive():
+    """True / False, or None when it could not be told (a process query that failed: not "gone")."""
     pids = game_pids()
-    return pids is None or bool(pids) or game_connected()     # (None: the query failed, assume it runs)
+    if pids is None:
+        return True if game_connected() else None
+    return bool(pids) or game_connected()
 
 
 GAME_CLOSING_S = 8.0            # game_still_running: a game seen at the start is watched this long for closing
@@ -631,13 +637,24 @@ def _ini(path):
     """key = value lines of an ini file (BeamNG's own, with a BOM)."""
     out = {}
     try:
-        with open(path, encoding="utf-8-sig", errors="replace") as f:
-            for line in f:
-                if "=" in line and not line.lstrip().startswith((";", "#", "[")):
-                    k, v = line.split("=", 1)
-                    out[k.strip()] = os.path.expandvars(v.strip())
+        with open(path, "rb") as f:
+            raw = f.read()
     except OSError:
-        pass
+        return out
+    # UTF-8, else the Windows ANSI code page (a user folder named in it, "C:\Users\Mikołaj\..." in cp1250, read with
+    # errors="replace" named a folder that did not exist: GitHub #770)
+    for enc in ("utf-8-sig", "mbcs", "cp1252"):
+        try:
+            text = raw.decode(enc)
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+    else:
+        text = raw.decode("utf-8", errors="replace")
+    for line in text.splitlines():
+        if "=" in line and not line.lstrip().startswith((";", "#", "[")):
+            k, v = line.split("=", 1)
+            out[k.strip()] = os.path.expandvars(v.strip())
     return out
 
 
@@ -844,6 +861,20 @@ def steam_launch_options(roots=None):
     return "" if seen else None
 
 
+def steam_user_path(line):
+    """The version folder of a -userpath in Steam's launch options line (quoted or not), or None: -userpath names the
+    folder the game puts its version folder in ("current"; a folder without one as it is)."""
+    import re
+    m = re.search(r'(?:^|\s)-userpath\s+(?:"([^"]+)"|(\S+))', line or "")
+    if not m:
+        return None
+    p = apppaths.clean(m.group(1) or m.group(2))
+    if not p or not os.path.isdir(p):
+        return None
+    cur = os.path.join(p, "current")
+    return cur if os.path.isdir(cur) else p
+
+
 def split_launch_options(line):
     """(env, wrapper, options) of Steam's launch options line: NAME=VALUE tokens before %command% are variables for
     the game's environment, other tokens before it are a command that wraps it (gamemoderun, mangohud), the tokens
@@ -955,7 +986,8 @@ def start_game(use_gcpatch, build="native", gfx="", user_dir=None, steam_args=({
 # A game update turns every mod off (core_modmanager.getModsDisabledAfterUpdate: "Mods will be disabled after updating
 # from version ...") until the player turns them back on in the main menu; without that BeamNG.Earth is just not there
 # (BeamNG 0.40, 2026-10-19). The game's log is read while it starts and the player told what to do.
-MODS_OFF_LINE = "Mods will be disabled after updating"
+MODS_OFF_LINES = ("Mods will be disabled after updating",       # (the first start after the update)
+                  "Mods disabled by setting disableModsAfterUpdate")  # (each start while the setting is on)
 GAME_LOG_WATCH_S = 600       # s after the game's start the log is watched
 
 
@@ -978,10 +1010,11 @@ def watch_game_log(user_dir, since):
                     pos += len(data)
             except OSError:
                 continue
-            if MODS_OFF_LINE.encode() in data:
+            if any(line.encode() in data for line in MODS_OFF_LINES):
                 problem("BeamNG.drive was updated and turned all mods off, BeamNG.Earth too.",
                         "In the game's main menu, choose to enable your mods again (or Mods > Manage, turn "
-                        "BeamNG.Earth on), then pick Freeroam > BeamNG.Earth. The world server keeps running.")
+                        "BeamNG.Earth on), then pick Freeroam > BeamNG.Earth. The world server keeps running; "
+                        "from the next start BeamNG.Earth turns them back on itself.")
                 return
 
     threading.Thread(target=run, name="watch-game-log", daemon=True).start()
@@ -1012,7 +1045,11 @@ def wait_for_game(proc, server=None):
             return False
         now = time.monotonic()
         direct_alive = proc is not None and proc.poll() is None
-        if game_alive() or (not IS_WIN and direct_alive):
+        alive = game_alive()
+        if alive is None:               # (could not be told: neither seen nor gone, the clocks keep their state)
+            time.sleep(1 if IS_WIN else 3)
+            continue
+        if alive or (not IS_WIN and direct_alive):
             started = True
             gone_since = None
             if first_seen is None:
@@ -1271,6 +1308,11 @@ def linux_build(force=None):
 
 def user_folder():
     import install
+    # (first the folder the game itself said it uses, when it ever differed from ours: the world server saves it,
+    # apppaths.set_user_dir; GitHub #770: the game's user folder elsewhere, our files written where it never looked)
+    told = apppaths.saved_user_dir()
+    if told and os.path.isdir(os.path.join(told, "mods")):
+        return told
     if IS_WIN:
         uf = windows_beamng_ini().get("userFolder")       # a user folder moved in the game's launcher
         if uf and os.path.isdir(uf):
@@ -1319,14 +1361,33 @@ def hand_over():
             return True
         if code == 0:
             return True
-    problem(f"The updated BeamNG.Earth ({os.path.basename(new)}) closed right after starting ({code}).",
-            "Starting this version instead. An antivirus may have blocked it: the in-game Update now (Settings, "
-            "About) downloads it again.")
+    sac = smart_app_control_on() or "4551" in str(code)
+    if sac:
+        problem(f"Windows Smart App Control blocked the updated BeamNG.Earth ({os.path.basename(new)}).",
+                "It only runs apps from a verified publisher, and BeamNG.Earth is not code-signed yet (it is "
+                "planned). This version keeps working, and that version will not be offered again.")
+    else:
+        problem(f"The updated BeamNG.Earth ({os.path.basename(new)}) closed right after starting ({code}).",
+                "Starting this version instead. An antivirus may have blocked it: the in-game Update now (Settings, "
+                "About) downloads it again.")
     try:
-        selfupdate.drop_staged()
+        selfupdate.drop_staged(blocked_by="smart_app_control" if sac else None)
     except Exception:
         pass
     return False
+
+
+def smart_app_control_on():
+    """Is Windows 11's Smart App Control enforcing (it blocks unsigned apps without a "run anyway"; GitHub #823)?
+    HKLM\\SYSTEM\\CurrentControlSet\\Control\\CI\\Policy VerifiedAndReputablePolicyState: 0 off, 1 on, 2 evaluation."""
+    if not IS_WIN:
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\CI\Policy") as k:
+            return int(winreg.QueryValueEx(k, "VerifiedAndReputablePolicyState")[0]) == 1
+    except (OSError, ValueError):
+        return False
 
 
 HANDOVER_CHECK_S = 5.0          # hand_over: the new copy must still run this long after its start (else: this one)
@@ -1662,6 +1723,14 @@ def run(args):
     else:
         user_dir = user_folder()
     tool = steam_compat_tool() if not IS_WIN and not args.user_dir else None
+    if not args.user_dir and build != "proton":
+        # the player's own -userpath in Steam's launch options: the game uses that folder whatever we pass, so the
+        # mod and the world's files go there too (GitHub #770; Discord 2026-11-05: "the fix was removing the custom
+        # launch option from steam")
+        own = steam_user_path(steam_launch_options())
+        if own and not apppaths.same_dir(own, user_dir):
+            row("Game folder", f"{own}  (your Steam launch options' -userpath)")
+            user_dir = own
     steam_args = ({}, [], [])
     if not IS_WIN:
         line = steam_launch_options()
@@ -1681,7 +1750,7 @@ def run(args):
         install.clear_reload_files(user_dir)
     reload_game = False
     if not args.keep_mod:
-        status = install.install_mod(user_dir, True, dry_run=False, quiet=True)
+        status = install.install_mod(user_dir, True, dry_run=False, quiet=True, game_running=running)
         # the game read its mod list without this copy: its Lua is reloaded once the server runs (install.py)
         reload_game = running and status in ("updated", "installed", "enabled")
         row("Mod", {"current": "up to date", "enabled": "turned back on", "updated": "updated",

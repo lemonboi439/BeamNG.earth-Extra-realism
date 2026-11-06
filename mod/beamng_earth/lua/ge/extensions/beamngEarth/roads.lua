@@ -39,7 +39,7 @@ M.enabled = true
 -- (key "s<tx>_<ty>") carry the render-only shapes SIGN_WHATS; switched off, their objects go but each tile keeps its data
 -- (signData) to show again at once
 M.signsEnabled = true
-M.SIGN_WHATS = { 'exits', 'mileposts', 'merges', 'speeds', 'names' }
+M.SIGN_WHATS = { 'exits', 'mileposts', 'merges', 'speeds', 'dirs', 'names' }
 -- be:reloadCollision() at most this often: every rebuild is a ~20 ms physics frame (2026-10-13, the
 -- engine's frame metrics), and while driving new sidewalk tiles arrive all the time. They arrive ~640 m
 -- ahead (11 s at 58 m/s), so a few seconds before they collide do not matter. A terrain commit rebuilds
@@ -338,6 +338,7 @@ local function dropTile(key)
   if t.fuel then require('beamngEarth/gasstations').dropKey(key) end
   if t.sound then require('beamngEarth/ambience').dropSpaces(key) end
   if t.wells then require('beamngEarth/pumpjacks').dropKey(key) end
+  if t.turbines then require('beamngEarth/windturbines').dropKey(key) end
   tiles[key] = nil
 end
 
@@ -640,6 +641,23 @@ function M.mapStations(pl, recs)
   return out
 end
 
+-- A mapped turbine's identity and dimensions stay intact; only its base and heading belong to the anchor.
+function M.mapTurbines(pl, recs)
+  local out, dyaw = {}, geotile.yawOf(pl)
+  for i, r in ipairs(type(recs) == 'table' and recs or {}) do
+    if type(r) == 'table' then
+      local n = {}
+      for k, v in pairs(r) do n[k] = v end
+      if type(r.x) == 'number' and type(r.y) == 'number' and type(r.z) == 'number' then
+        n.x, n.y, n.z = geotile.apply(pl, r.x, r.y, r.z)
+      end
+      if type(r.yaw) == 'number' then n.yaw = r.yaw + dyaw end
+      out[i] = n
+    end
+  end
+  return out
+end
+
 -- The rows of tile t (key) handed to their modules, mapped into its current placement (made: replaced in place).
 local function geoRows(key, t, data, replacing)
   local pl = t.rowPl.pl
@@ -674,6 +692,10 @@ local function geoRows(key, t, data, replacing)
     if t.wells and pj.placeRows then pj.placeRows(key, rows) else pj.onRows(key, rows) end
     t.wells = true
   end
+  local turbines = require('beamngEarth/windturbines')
+  local turbineRows = M.mapTurbines(pl, data.turbines)
+  if replacing then turbines.placeRows(key, turbineRows) else turbines.onRows(key, turbineRows) end
+  t.turbines = #turbineRows > 0
   if type(data.sound) == 'table' and data.sound[1] then
     local amb = require('beamngEarth/ambience')
     local flat = M.mapFlat(pl, data.sound, 8, 2, 8)
@@ -1052,7 +1074,7 @@ function M.onTile(msg, currentAnchor, a)
   -- pooled shape files: the server's slot paths instead of the tile's own files
   local slots = {}
   for _, what in ipairs({ 'road', 'deck', 'walk', 'walkcol', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'wire', 'tunnel', 'rail',
-      'railcol', 'barrier', 'exits', 'mileposts', 'merges', 'speeds', 'names' }) do
+      'railcol', 'barrier', 'exits', 'mileposts', 'merges', 'speeds', 'dirs', 'names' }) do
     local sl = msgSlot(msg, what)
     if sl then
       if type(data[what]) == 'table' and type(data[what].pos) == 'table' then
@@ -1095,6 +1117,8 @@ function M.onTile(msg, currentAnchor, a)
     require('beamngEarth/pumpjacks').onRows(key, data.wells)
     tiles[key].wells = true
   end
+  require('beamngEarth/windturbines').onRows(key, type(data.turbines) == 'table' and data.turbines or {})
+  tiles[key].turbines = type(data.turbines) == 'table' and #data.turbines > 0
   if type(data.sound) == 'table' and data.sound[1] then    -- tunnels' and bridges' sound spaces (ambience.lua)
     require('beamngEarth/ambience').onSpaces(key, data.sound)
     tiles[key].sound = true
@@ -1105,6 +1129,9 @@ function M.onTile(msg, currentAnchor, a)
   -- a sign tile (key "s<tx>_<ty>"): its render-only sign shapes, kept in signData for setSignsEnabled
   tiles[key].signOnly = tostring(msg.key):match('^s%-?%d+_') ~= nil
   tiles[key].signData = {}
+  if type(data.dirs_faces) == 'table' then       -- the direction boards' Materials, before their shape (dirsigns.lua)
+    require('beamngEarth/dirsigns').register(data.dirs_faces)
+  end
   for _, what in ipairs(M.SIGN_WHATS) do
     local sign = data[what]
     if type(sign) == 'table' and sign.shape and type(sign.pos) == 'table' then
@@ -1550,7 +1577,7 @@ M.GHOST_FAR_WAIT_S = 2      -- ... from this long after the rebase on
 local ghostSince = nil      -- stopwatch since the last rebase that left ghosts
 
 local WHATS = { 'walk', 'road', 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'wire', 'tunnel', 'railtunnel', 'barrier', 'rail', 'railcol',
-  'exits', 'mileposts', 'merges', 'speeds', 'names' }
+  'exits', 'mileposts', 'merges', 'speeds', 'dirs', 'names' }
 
 function M.transform(xf, geodesy)
   local bx, by, bz, bw = xf:beamngQuat()

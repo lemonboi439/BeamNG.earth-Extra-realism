@@ -83,6 +83,7 @@ Baden-Wurttemberg (`owsproxy.lgl-bw.de`), Lower Saxony (`opendata.lgln.niedersac
 
 | Source | Address | What it builds | If it does not answer | Status line |
 |---|---|---|---|---|
+| OpenStreetMap wind turbines, distributed by GMWID / Geomermaids | Bundled index; no gameplay requests | Mapped individual turbines worldwide, with installed stock animated shapes. OSM snapshot 2026-10-31; source, license and refresh details in `server/wind_turbines.provenance.json`. | Gameplay uses the bundled copy offline. If the index is missing or damaged, only the verified Happy Jack fallback remains and the server logs a warning. | no runtime host |
 | BeamNG.Earth's weekly data (GitHub Pages) | `tecnagamer.github.io` | Built every week from the whole OpenStreetMap planet by this project: railway details (track gauge, electrification, disused and abandoned lines, level crossings and their barriers) and, in the US, the Federal Railroad Administration's list of the gates, lights and crossbucks at each level crossing. | Railways keep their basic class; level crossings get equipment by road size. | optional |
 | OurAirports | `davidmegginson.github.io` | Airports and their runways (position, length, width, surface), for paved runways and levelled airfields. Fetched about once a week. | The copy on disk is used. | named |
 | 3D Model Repository | `3dmr.eu` | 3D models of landmarks (the Eiffel Tower, the Dragon Bridge in Da Nang, ...) where the map links one: the models near you are looked up and downloaded once, then kept in the cache. Off on the settings page ("3D models from 3dmr.eu"). | The usual buildings and bridges stay there; asked again on a later visit. | optional |
@@ -92,6 +93,7 @@ Baden-Wurttemberg (`owsproxy.lgl-bw.de`), Lower Saxony (`opendata.lgln.niedersac
 
 | Source | Address | What it does | What is sent | If it does not answer | Status line |
 |---|---|---|---|---|---|
+| NASA GIBS (VIIRS true colour) | `gibs.earthdata.nasa.gov` | The clouds you see from space: the latest satellite day round the point under you, only while the camera is far above the clouds. | Which map tiles round your position (no other data). | No clouds from orbit until it answers. | optional |
 | Open-Meteo | `api.open-meteo.com` | Real weather (clouds, rain, snow, wind, fog) and the local time zone. | The position you are at. | The weather stays as it is. | optional |
 | Photon (komoot) | `photon.komoot.io` | The map's address and place search. (The status bar's town names no longer come from it: they are read from the Overture Maps data.) | What you type, and your position (to rank nearby results first). | Search says it is unavailable for a moment. | optional |
 | Nominatim (OpenStreetMap) | `nominatim.openstreetmap.org` | The map's street and address search, only when you press Enter (its usage policy forbids autocomplete). What you typed is sent to it, with an area around your position as a bias. |
@@ -110,6 +112,7 @@ Baden-Wurttemberg (`owsproxy.lgl-bw.de`), Lower Saxony (`opendata.lgln.niedersac
 ## Data that comes with the app (no download)
 
 - **Country and state borders, big town names** (Natural Earth): the world map.
+- **US Interstates and US routes** (Natural Earth): the world map's Highways layer.
 - **Climate zones** (Beck et al. Köppen-Geiger map): which trees grow where and which landscape sounds play.
 - **Oil wells and refineries** (OpenStreetMap, exported once): pump jacks, refinery sounds.
 - **Bridge types** (the US National Bridge Inventory and Wikidata): trusses, arches, suspension and cable-stayed

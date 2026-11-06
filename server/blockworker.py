@@ -23,6 +23,7 @@ import numpy as np
 
 import secrossings
 import dem as demmod
+import development as developmentmod
 import farfield
 import furniture
 import geodesy
@@ -101,8 +102,7 @@ class _State:
     def _clear_chunks(self):
         with self.lock:
             for c in self.chunks.values():
-                with c.lock:
-                    c.chunks.clear()
+                c.clear()
 
     def anchor(self, aid, lat, lon):
         """(Grader or None, ChunkCache) of an anchor; only the last few anchors are kept."""
@@ -302,7 +302,9 @@ def plan_ahead(g, frame, cx, cy, half):
 
 def ground(frame, la, lo, z):
     """The DEM heights z at (la, lo) shaped before the road grading: runways graded in (--airports on),
-    the sea floor carved in (--sea on)."""
+    the sea floor carved in (--sea on), and the land off the roads roughened (grading.terrain_bumps)."""
+    import grading
+    z = np.asarray(z, np.float64) + grading.terrain_bumps(np.asarray(la, np.float64), np.asarray(lo, np.float64))
     if _s.airports is not None:
         z = _s.airports.apply(la, lo, z)
     if _s.sea is not None:
@@ -418,6 +420,7 @@ def build(aid, lat, lon, hm_zoom, q, cx, cy, size, out_dir, name, ter_name=None,
         lots = _s.surface.lots(keep["lat"], keep["lon"]) if hasattr(_s.surface, "lots") else None
         if lots:                        # farmland under the carriageways (a field does not cover the asphalt)
             idx = surfacemod.paint_fields(idx, keep["lat"], keep["lon"], lots)
+            idx = surfacemod.paint_golf(idx, keep["lat"], keep["lon"], lots)   # (golf over it: courses win)
         if road_feats:
             before = idx
             idx = surfacemod.paint_roads(idx, keep["lat"], keep["lon"], road_feats, heightmap.SQUARE,
@@ -589,7 +592,7 @@ def roads_tile(aid, lat, lon, zoom, tx, ty, out_dir, vfs_dir, sidewalks, lift, b
 STACK_DUMP_S = float(os.environ.get("BNGE_STACK_DUMP_S", "") or 75.0)   # s before a slow tile's stacks go to the log
 
 
-def signs_tile(aid, lat, lon, zoom, tx, ty, out_dir, vfs_dir, left_hand=False, mph=True, country=None):
+def signs_tile(aid, lat, lon, zoom, tx, ty, out_dir, vfs_dir, left_hand=False, mph=True, country=None, dirs=False):
     """signstream.build_tile here: the highway signs of a road tile the mod has (from cody196's PR #363), in a road
     process: its map cells are warm there. Returns (vfs path of the sign tile's JSON, number of meshes)."""
     import signstream
@@ -601,30 +604,15 @@ def signs_tile(aid, lat, lon, zoom, tx, ty, out_dir, vfs_dir, left_hand=False, m
         return g.apply(la, lo, z, gradingmod.ROAD_LIFT) if g is not None else z
     return signstream.build_tile(_s.md, frame, aid, tx, ty, elev, out_dir, vfs_dir,
                                  _s.surface.urban if _s.surface is not None else None, _s.widths, left_hand, mph,
-                                 country)
+                                 country, dirs)
 
 
 def _stack_watch(what):
-    """A timer that writes every thread's stack of this worker to the server log (stderr) when what is still running
-    after STACK_DUMP_S: where a hung road tile waits (the server's own stuck warning says only that it waits)."""
-    def dump():
-        import faulthandler
-        import sys
-        out = sys.stderr
-        if out is None:
-            return
-        try:
-            log.warning("%s still building after %.0f s in worker %d: its threads' stacks follow", what,
-                        STACK_DUMP_S, os.getpid())
-            out.flush()
-            faulthandler.dump_traceback(file=out, all_threads=True)
-            out.flush()
-        except Exception:               # (diagnostics only)
-            pass
-    t = threading.Timer(STACK_DUMP_S, dump)
-    t.daemon = True
-    t.start()
-    return t
+    """A timer that writes every thread's stack of this worker to the server log when what is still running after
+    STACK_DUMP_S: where a hung road tile waits (the server's own stuck warning says only that it waits). One log record
+    (stackdump: several workers dumping at once had interleaved unreadably)."""
+    import stackdump
+    return stackdump.watch(STACK_DUMP_S, f"{what} still building after {STACK_DUMP_S:.0f} s")
 
 
 def _roads_tile_cached(aid, lat, lon, zoom, tx, ty, out_dir, vfs_dir, sidewalks, lift, buildings, left_hand, mph, q,
@@ -766,6 +754,8 @@ def _tile_parts(mark, frame, tile, zoom, g, buildings, left_hand, mph, gas_stati
                                    1 + seacarvemod.LINE_CELLS if _s.sea is not None else 0))
     if getattr(_s, "fra", None) is not None:       # (the US's level crossings' devices, alongside)
         _s.fra.prefetch(roadsmod.cells_of_tile(frame, tx, ty))
+    if buildings:                                   # (the props' side sources, read while the tile is built)
+        _s.md.side_prefetch(roadsmod.cells_of_tile(frame, tx, ty))
     mark("warm")
     cells = [_s.md.cell(k, layers=("roads",), kind="demand").layers.get("roads")
              for k in roadsmod.cells_of_tile(frame, tx, ty)]
@@ -845,6 +835,7 @@ def _tile_parts(mark, frame, tile, zoom, g, buildings, left_hand, mph, gas_stati
                                  terrain_paint=getattr(_s, "surface", None) is not None, cover_out=cover, marks=marks,
                                  roads_out=near_roads, skin_margin=skin_margin, walks_raw=walks_raw,
                                  signals=furniture.signals_for(_s.md, frame, near_cells), nodes=nodes,
+                                 development=developmentmod.for_tile(_s.md, frame, tx, ty),
                                  clearance_out=clearance)
     mark("build_tile")
     chunks += railsmod.tile_chunks(frame, tx, ty, cells, country, urban)     # railway and tram tracks on the ground
@@ -997,11 +988,23 @@ def _tile_parts(mark, frame, tile, zoom, g, buildings, left_hand, mph, gas_stati
         garage_sound = (garage_sound + industry.refinery_sound_rows(frame, tx, ty, _s.md, elev)
                         + industry.power_plant_sound_rows(frame, tx, ty, _s.md, elev))
         mark("powerlines")
+    import windturbines
+    turbine_rows = windturbines.tile_turbines(frame, tx, ty, elev)
+    if getattr(_s, "md", None) is not None:
+        import golf
+        try:
+            land_fn = lambda key: _s.md.cell(key, layers=("land_use",), kind="demand").layers.get("land_use")
+            flag_rows = golf.rows(frame, land_fn, box, elev)
+            if flag_rows:
+                props = (props or []) + flag_rows
+        except Exception as ex:
+            log.warning("golf: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
     P.chunks, P.ctx, P.walks, P.box, P.origin = chunks, ctx, walks, box, (x0, y0, 0.0)
     P.custom, P.custom_entries = _custom, _entries
     P.bld, P.props, P.wires, P.park, P.fuel, P.fuel_pads = bld, props, wires, park, fuel, fuel_pads
     P.guardrail_rows, P.garage_sound, P.wells = guardrail_rows, garage_sound, oil_wells
     P.barrier_mesh, P.barrier_chunks = barrier_mesh, barrier_chunks     # (PR #471's median barriers)
+    P.turbines = turbine_rows
     return P
 
 
@@ -1026,7 +1029,7 @@ def _roads_tile(aid, lat, lon, zoom, tx, ty, out_dir, vfs_dir, sidewalks, lift, 
                               guardrail_rows=P.guardrail_rows, garage_sound=P.garage_sound,
                               custom_entries=P.custom_entries, wells=P.wells, bld_none=bool(buildings),
                               barrier_mesh=P.barrier_mesh, barrier_chunks=P.barrier_chunks,
-                              rail_tunnel=P.rtmesh, rail_tube=P.rtube) + (P.fuel_pads,)
+                              rail_tunnel=P.rtmesh, rail_tube=P.rtube, turbines=P.turbines) + (P.fuel_pads,)
     mark("write")
     return out
 
@@ -1107,7 +1110,7 @@ def _content_hash(text, vfs_dir):
 @profile_step('Geometry serialization')
 def _write_geo_content(out_dir, vfs_dir, tile, P):
     """A geotile's content written to the session folder: its shapes (rg_<key>_<what>.cdae, each with its pivot and
-    relief), its rows (props, guard rails, parking, stations, wells, sound) and colliders in its own frame, and the
+    relief), its rows (props, guard rails, parking, stations, wells, turbines, sound) and colliders in its own frame, and the
     skin's inputs (rg_<key>.skin.pkl: the chunks, their deck context and the sidewalk pieces). Returns (vfs path of
     the JSON, chunk count, its info for the tracker: {"h", "parts": {what: {pivot, relief, col}}})."""
     import json
@@ -1128,7 +1131,7 @@ def _write_geo_content(out_dir, vfs_dir, tile, P):
                                    custom_entries=getattr(P, "custom_entries", None), wells=P.wells,
                                    decals=False, barrier_mesh=getattr(P, "barrier_mesh", None),
                                    barrier_chunks=getattr(P, "barrier_chunks", ()),
-                                   rail_tunnel=P.rtmesh, rail_tube=P.rtube)
+                                   rail_tunnel=P.rtmesh, rail_tube=P.rtube, turbines=getattr(P, "turbines", ()))
         with open(os.path.join(tmpdir, f"roads_0_{tile}_None.json"), encoding="utf-8") as f:
             data = json.loads(f.read())
         files = roadsmod.shape_files(0, tile, None)

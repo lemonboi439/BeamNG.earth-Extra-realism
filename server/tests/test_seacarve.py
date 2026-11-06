@@ -129,6 +129,37 @@ class SeaCarveTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as other:
             np.testing.assert_array_equal(a, seacarve.SeaCarver(BathyMapData(), other).depth(lat, lon))
 
+    def test_raw_copy_stores_only_the_blocks_with_water(self):
+        """The raw copy keeps the RAW_BLOCK_PX blocks with water (and one land block): a landlocked first visit's
+        cells were 9.4 MB each, 3 % of their pixels water (2026-11-05). Read back the same, lookups and all of it."""
+        n = 1026
+        rng = np.random.default_rng(3)
+        depth = np.zeros((n, n), np.float32)
+        level = np.full((n, n), np.nan, np.float32)
+        outline = np.zeros((n, n), bool)
+        depth[100:140, 600:700] = rng.random((40, 100), np.float32) * 3     # a pond
+        level[98:142, 598:702] = 212.3
+        outline[500:503, :] = True                                          # a river's outline across
+        level[1020:, 1020:] = 0.0                                           # (a level of 0: not land)
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "c.rawb.npy")
+            seacarve._write_raw(p, (depth, level, outline))
+            self.assertLess(os.path.getsize(p), 0.15 * n * n * seacarve.RAW_DTYPE.itemsize)
+            got = seacarve._open_raw(p)
+            for a, b in zip(got, (depth, level, outline)):
+                self.assertEqual(a.shape, (n, n))
+                np.testing.assert_array_equal(np.asarray(a), b)
+                j, i = rng.integers(0, n, 3000), rng.integers(0, n, 3000)
+                np.testing.assert_array_equal(a[j, i], b[j, i])
+            self.assertEqual(float(got[1][1025, 1025]), 0.0)
+            del got
+            gc.collect()
+            with open(p, "r+b") as fh:          # damaged: not read (the npz serves, and the copy is written again)
+                fh.seek(-10, 2)
+                fh.truncate()
+            with self.assertRaises(ValueError):
+                seacarve._open_raw(p)
+
     def test_raw_copy_and_older_cells(self):
         """Read back memory-mapped (the raw copy) and from a cell cached before the raw copies (converted): the
         same water as the build."""
@@ -137,15 +168,15 @@ class SeaCarveTest(unittest.TestCase):
         lon = np.array([LON0, LON0 + 0.001, LON0])
         first = seacarve.SeaCarver(BathyMapData(), self.tmp.name)
         a = first.water(lat, lon)
-        raws = glob.glob(os.path.join(self.tmp.name, "**", "*.raw.npy"), recursive=True)
+        raws = glob.glob(os.path.join(self.tmp.name, "**", "*.rawb.npy"), recursive=True)
         self.assertFalse(raws, "no raw copy at a cell's first use (SeaCarver._second_use)")
         first._mem.clear()              # (out of the process's MEM_CELLS: needed again)
         first.water(lat, lon)
-        raws = glob.glob(os.path.join(self.tmp.name, "**", "*.raw.npy"), recursive=True)
+        raws = glob.glob(os.path.join(self.tmp.name, "**", "*.rawb.npy"), recursive=True)
         self.assertTrue(raws, "written at its second use")
         sc = seacarve.SeaCarver(BathyMapData(), self.tmp.name)
         b = sc.water(lat, lon)
-        mapped = next(r for r, _, _ in sc._mem.values() if r is not None)[0]
+        mapped = next(r for r, _, _ in sc._mem.values() if r is not None)[0].data
         self.assertFalse(mapped.flags.owndata or mapped.flags.writeable, "a view of the raw copy's mapping")
         del sc, mapped
         gc.collect()  # the mappings closed: Windows removes no mapped file
@@ -155,7 +186,7 @@ class SeaCarveTest(unittest.TestCase):
         c = csc.water(lat, lon)         # (from the npz, a cell cached before the raw copies)
         csc._mem.clear()
         csc.water(lat, lon)
-        self.assertTrue(glob.glob(os.path.join(self.tmp.name, "**", "*.raw.npy"), recursive=True))
+        self.assertTrue(glob.glob(os.path.join(self.tmp.name, "**", "*.rawb.npy"), recursive=True))
         for x in (b, c):
             np.testing.assert_array_equal(a[0], x[0])
             np.testing.assert_array_equal(a[1], x[1])
@@ -281,6 +312,74 @@ class LakeDem:
         in3 = (lat > LAKE_LAT + 2 * D) & (lat < LAKE_LAT + 3 * D) & (lon > LAKE_LON) & (lon < LAKE_LON + D)
         e[in3] = 40.0 + (lat[in3] - LAKE_LAT - 2 * D) / D * 20.0
         return e
+
+
+class GatedBathy(FakeBathy):
+    """NOAA's export held until the gate opens (a slow server)."""
+
+    def __init__(self):
+        super().__init__()
+        import threading
+        self.gate = threading.Event()
+
+    def get(self, url, kind="demand"):
+        self.gate.wait(10)
+        return super().get(url, kind)
+
+
+class LandLookupTest(unittest.TestCase):
+    """Lookups on land in a coastal cell do not wait for the sea's bathymetry (a coastal first visit's road tiles
+    waited minutes for NOAA, 2026-11-06), and get what they would have got after it; a lookup by the sea waits."""
+
+    def run_bg(self, fn):
+        import threading
+        out = {}
+        t = threading.Thread(target=lambda: out.setdefault("r", fn()), daemon=True)
+        t.start()
+        return t, out
+
+    def test_land_without_waiting_sea_waits(self):
+        md = BathyMapData()
+        md.fetcher = GatedBathy()
+        land = (np.array([south(-200), south(-40), south(-10)]), np.array([LON0, LON0 + 0.002, LON0]))
+        sea = (np.array([south(100)]), np.array([LON0]))
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as d2:
+            sc = seacarve.SeaCarver(md, d)
+            t, out = self.run_bg(lambda: sc.water(*land))
+            t.join(5)
+            self.assertFalse(t.is_alive(), "land: answered with the bathymetry still out")
+            calls = md.calls
+            ts, outs = self.run_bg(lambda: sc.water(*sea))
+            ts.join(0.5)
+            self.assertTrue(ts.is_alive(), "by the sea: waits for it")
+            md.fetcher.gate.set()
+            ts.join(10)
+            self.assertAlmostEqual(float(outs["r"][0][0]), -FakeBathy.BATHY, places=1)
+            ref = seacarve.SeaCarver(BathyMapData(), d2).water(*land)
+            for a, b in zip(out["r"], ref):
+                np.testing.assert_array_equal(a, b)
+            self.assertFalse(sc._land, "the whole raster replaced the one without bathymetry")
+            self.assertEqual(md.calls, calls, "built with the bathymetry from the first build's state, not again")
+
+
+class PrefetchTest(unittest.TestCase):
+    def test_prefetched_cells_whole_on_disk(self):
+        """A teleport's cells (earthd.warm_place) built whole with their sea floor in the background: on disk for the
+        road processes, nobody asked yet."""
+        import time
+        with tempfile.TemporaryDirectory() as d:
+            sc = seacarve.SeaCarver(BathyMapData(), d)
+            mx, my = seacarve._merc(np.array([south(100)]), np.array([LON0]))
+            k = (int(mx[0] // seacarve.CELL_PX), int(my[0] // seacarve.CELL_PX))
+            self.assertEqual(sc.prefetch_full([k]), 1)
+            self.assertEqual(sc.prefetch_full([k]), 0, "asked once")
+            t0 = time.monotonic()
+            while not (sc.ready(*k) and sc._mem.get(k, (None, False))[1]) and time.monotonic() - t0 < 10:
+                time.sleep(0.05)
+            self.assertTrue(os.path.exists(sc._path(*k)), "whole, on disk")
+            other = seacarve.SeaCarver(FakeMapData(fail=True), d)
+            self.assertAlmostEqual(float(other.depth(np.array([south(100)]), np.array([LON0]))[0]), -FakeBathy.BATHY,
+                                   places=1)
 
 
 class LakeTest(unittest.TestCase):

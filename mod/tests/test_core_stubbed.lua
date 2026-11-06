@@ -198,6 +198,7 @@ T.check(tb and tb.lastImport.sq == SQ and tb.pos.x == -1024 and tb.pos.y == -102
 frames(3)
 T.check(#received('hello') == 1 and received('hello')[1].protocol == 4 and received('hello')[1].format == 4,
   'hello (protocol 4, format 4: the newest the mod reads) sent on connect')
+T.check(received('hello')[1].turbineGeo == 1, 'far turbine geotile capability sent on connect')
 T.check(calls.safeTeleport == 1, 'player placed on flat ground')
 
 -- capture the mod's warnings (the stub log() drops everything)
@@ -903,5 +904,27 @@ do
     'base photo refresh: dropped when its block is no longer the one in use')
   terrain.setBase = setBase
   st.anchorId, st.block, st.player = was[1], was[2], was[3]
+end
+-- fast pre-cache's pause (PR #773): only our own pause is let go, and the app going away ends it
+do
+  local sh = require('beamngEarth/simhold')
+  local was = { sh.paused, sh.pause }
+  local paused, calls_ = false, {}
+  sh.paused = function() return paused end
+  sh.pause = function(on) calls_[#calls_ + 1] = on; paused = on end
+  core._fastHeld, core._fastPaused = false, false
+  core.fastAreaPause('a1')
+  T.check(paused and calls_[1] == true, 'fast pre-cache: the game paused')
+  core.fastAreaPause('')
+  T.check(not paused and calls_[2] == false, 'fast pre-cache over: our pause let go')
+  paused, calls_ = true, {}                    -- the player paused already
+  core.fastAreaPause('a2')
+  core.fastAreaPause(nil)
+  T.check(paused and #calls_ == 0, "fast pre-cache: a pause it didn't make is left as it was")
+  paused, calls_ = false, {}
+  core.fastAreaPause('a3')
+  core.reconnect()                            -- (drops the connection through the '_disconnected' handler)
+  T.check(not paused and calls_[2] == false, 'fast pre-cache: the app gone, the pause let go')
+  sh.paused, sh.pause = was[1], was[2]
 end
 T.done('test_core_stubbed')

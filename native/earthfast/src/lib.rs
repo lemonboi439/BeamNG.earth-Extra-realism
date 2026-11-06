@@ -1,5 +1,7 @@
 //! Geometry kernels for the world server (server/fast.py wraps them, with the Python versions as the fallback).
 //! All coordinates are metres in the anchor's local frame, f64.
+mod devraster;
+mod spaceclouds;
 mod cdaez;
 mod clearance;
 mod f32z;
@@ -26,6 +28,8 @@ mod ribbons;
 mod groundpaint;
 mod medians;
 mod speedsigns;
+mod dirsigns;
+mod dirsigns_face;
 mod cachemap;
 mod areacover;
 mod geotiles;
@@ -5297,6 +5301,10 @@ pub(crate) fn rtin_core(hv: &[f64], n: usize, max_err: f64) -> (Vec<[i64; 3]>, V
 
 #[pymodule]
 fn earthfast(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(dirsigns::dirsign_place, m)?)?;
+    m.add_function(wrap_pyfunction!(dirsigns::dirsign_mesh, m)?)?;
+    m.add_function(wrap_pyfunction!(dirsigns_face::dirsign_set_fonts, m)?)?;
+    m.add_function(wrap_pyfunction!(dirsigns_face::dirsign_face, m)?)?;
     m.add_function(wrap_pyfunction!(island_ring_rays, m)?)?;
     m.add_function(wrap_pyfunction!(dsm::dsm_ground, m)?)?;
     m.add_function(wrap_pyfunction!(dsm::fill_holes, m)?)?;
@@ -5338,6 +5346,10 @@ fn earthfast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(groundpaint::value_noises, m)?)?;
     m.add_function(wrap_pyfunction!(groundpaint::pad_cover, m)?)?;
     m.add_function(wrap_pyfunction!(groundpaint::paint_pads, m)?)?;
+    m.add_function(wrap_pyfunction!(devraster::fill_bits, m)?)?;
+    m.add_function(wrap_pyfunction!(spaceclouds::cloud_layer, m)?)?;
+    m.add_function(wrap_pyfunction!(spaceclouds::shell_lonlat, m)?)?;
+    m.add_function(wrap_pyfunction!(spaceclouds::night_lights, m)?)?;
     m.add_function(wrap_pyfunction!(groundpaint::photo_ghosts, m)?)?;
     m.add_function(wrap_pyfunction!(groundpaint::dash_pieces, m)?)?;
     m.add_function(wrap_pyfunction!(power::substation_yard, m)?)?;
@@ -5476,6 +5488,6 @@ fn earthfast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<traffic::Routes>()?;
     m.add_class::<clearance::Clearance>()?;
     m.add_class::<clearance::DeckLevels>()?;
-    m.add("VERSION", 147)?;
+    m.add("VERSION", 151)?;
     Ok(())
 }

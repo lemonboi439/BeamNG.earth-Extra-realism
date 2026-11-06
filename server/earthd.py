@@ -110,6 +110,7 @@ import roadmesh as roadmeshmod  # noqa: E402
 import roadwidth as roadwidthmod  # noqa: E402
 import revisit as revisitmod  # noqa: E402
 import signstream  # noqa: E402
+import dirsigns as dirsignsmod  # noqa: E402
 import mapdata as mapdatamod  # noqa: E402
 import dem as demmod  # noqa: E402
 import mapcells  # noqa: E402
@@ -134,6 +135,7 @@ import riverlines as riverlinesmod  # noqa: E402
 import groundahead as groundaheadmod  # noqa: E402
 import routeahead as routeaheadmod  # noqa: E402
 import furniture as furnituremod  # noqa: E402
+import development as developmentmod  # noqa: E402
 import heightmap  # noqa: E402
 import staging  # noqa: E402
 import imagery as imagerymod  # noqa: E402
@@ -202,6 +204,7 @@ NEAR_VISUALS = ("mesh", "terrain", "detail")
 # as in terrain mode. MESH_LAYOUT: the modes on the mesh-mode tile layout; BLOCK_DRAWN: the block is seen.
 MESH_LAYOUT = ("mesh", "detail")
 BLOCK_DRAWN = ("terrain", "detail")
+TUNNEL_NEAR_M = 40.0          # m round a teleport's spot searched for a tunnel's tube (tunnel_floor)
 TUNNEL_FLOOR_UNDER_M = 2.0     # a tunnel floor this far under the ground at a teleport's origin: the car goes on the floor
 SEA_CHECK_S = 15.0          # sea (--sea on): the water tiles planned again when the player enters another
                             # 512 m square, or after this long (cells built meanwhile; seatiles.py)
@@ -355,6 +358,13 @@ FIN_WORKER_WINDOW, FIN_WORKER_MIN_TRIES, FIN_WORKER_SHARE, FIN_WORKER_PROBE = 40
 FIN_WORKER = os.environ.get("BNGE_FIN_WORKER", "1") != "0"     # (A/B: 0 renders them all here, as before)
 NAV_LEAD_S, NAV_LEAD_MAX_M = 12.0, 500.0     # the nav graph's centre ahead of a moving car (navgraph.WINDOW_M 1100)
 LAG_STALL_S = 2.0                     # s: a stall this long is logged without -v (its stack, then its length)
+# The event loop's thread a step above the server's other threads (budget.raise_thread, Windows): a block built 17 s
+# earlier held the car at the edge until the loop answered its request (A13 at 200 mph, 2 server cores, 2026-11-04;
+# GitHub #725). BNGE_LOOP_RAISE=0: as the others, as before
+LOOP_RAISE = os.environ.get("BNGE_LOOP_RAISE", "1") != "0"
+# ms the interpreter lock is held before a waiting thread is let in (Python's own: 5): the event loop waits up to this
+# long behind each busy thread. BNGE_SWITCH_MS=0: Python's own, as before
+SWITCH_MS = float(os.environ.get("BNGE_SWITCH_MS", "2") or 0)
 ROAD_PROCESSES = 2              # road-tile processes (--block-process on, --roads on)
 # s a road tile may take in its worker before it is given up and its workers restarted (build_roads_tile): a first
 # visit's slowest tiles take ~1 min on a busy 6-core laptop and several times that on a Steam Deck, where a tile given
@@ -773,6 +783,13 @@ def osm_fuel_tiles(frame, key, tiles, geo=False):
     return {t for t in tiles if any(str(c) == k for c in osm_fuel_cells(frame, t, geo))}
 
 
+TURBINE_GEO = 1
+TURBINE_Z = 15             # about 1 km cells at mid-latitudes; existing far-content tracker
+TURBINE_SEND_M = 4000.0
+TURBINE_DROP_M = 5000.0
+TURBINE_PER_POSE = 2       # bounded batches: only populated cells request terrain elevations
+
+
 class Server:
     def __init__(self, user_dir, cache_dir, tile_workers=3, kfun=None,
                  hysteresis=farfield.HYSTERESIS, radius=farfield.RADIUS, far_format="cdae",
@@ -1051,6 +1068,7 @@ class Server:
             self.osm_fuel = ThreadPoolExecutor(OSM_FUEL_THREADS, thread_name_prefix="osm-fuel")
             self.osm_fuel_done, self.osm_fuel_wait = set(), {}
             self.osm_fuel.submit(self._osm_fuel_warm)
+        self.dirs_on = False        # the settings page's Direction signs (dirsigns.enabled; BNE_DIRSIGNS=on forces it)
         if self.gas_stations and surface is not None and hasattr(surface, "gas_pads"):
             surface.gas_pads = True     # their forecourts painted asphalt (surface.Surface.fuel_pads)
         self.traffic = bool(traffic) and mapdata is not None   # the AI road graph around the player (navgraph.py)
@@ -1065,6 +1083,9 @@ class Server:
         self.cache = cache
         self.covermap = None            # the map's cache view (covermap.CoverMap; main_async, with a Cache)
         self.areas = None               # saved areas downloaded ahead (areas.Areas; main_async, with a Cache)
+        self.fast_pool = None           # the saved areas' fast mode: its own road processes (fast_precache)
+        self.make_fast_pool = None      # n -> such a pool (main_async: the road pool's initializer), or None
+        self._fast_lock = threading.Lock()
         if cache is not None:
             for producer in (self.dem, self.imagery, self.deshadow, self.colormatch):
                 if producer is not None:
@@ -1240,6 +1261,32 @@ class Server:
         for c in self.connections:
             out |= c.sessions
         return out
+
+    def check_user_dir(self, conn, game_path):
+        """The game's own user folder (hello.userPath) against the one this server writes into: a game whose user
+        folder is elsewhere (moved in BeamNG's launcher, its own -userpath, a folder name the launcher misread) never
+        finds our tiles: the car on a flat plane, "loading terrain" for good (GitHub #770). Told to the player, and
+        saved for the launcher's next start (apppaths.set_user_dir)."""
+        if not isinstance(game_path, str) or not game_path.strip():
+            return
+        game = os.path.normpath(game_path.strip())
+        if not os.path.isdir(game):     # (a path we cannot see: Proton's C:/users/steamuser/..., a Flatpak sandbox's
+            return                      # home: not ours to judge)
+        try:
+            apppaths, _ = _app_modules()
+            same = apppaths.same_dir(game, self.user_dir)
+        except Exception:           # (no apppaths: compared as text)
+            apppaths, same = None, os.path.normcase(game) == os.path.normcase(os.path.normpath(self.user_dir))
+        if same:
+            return
+        log.error("the game's user folder is %s, but this server writes into %s: the game cannot find the world's "
+                  "files (GitHub #770); the next start uses the game's folder", game, self.user_dir)
+        if apppaths is not None:
+            try:
+                apppaths.set_user_dir(game)
+            except OSError as e:
+                log.warning("could not save the game's user folder: %s", e)
+        conn.send({"type": "user_dir_mismatch", "game": game, "server": self.user_dir})
 
     def claim_sessions(self, conn, sessions):
         """hello / pose `sessions` of a connection: the session folders whose files the game's objects
@@ -1579,6 +1626,47 @@ class Server:
                     reader=md.overture if md is not None else None)
             return pn
 
+    def build_turbines_geo(self, gx, gy):
+        """Mapped wind turbines through the existing geotile tracker, without building distant roads.
+
+        Empty cells do no DEM work. Populated cells sample their exact mapped points in one batch, with the
+        existing airport/sea ground rules; nearby road-owned records provide the graded installation height.
+        The tracker limits simultaneous batches, and this session memo keeps delivered heights stable.
+        """
+        import geotiles
+        import windturbines
+        memo = self.__dict__.setdefault("_turbines_geo_done", {})
+        key = geotiles.key(gx, gy, TURBINE_Z)
+        filename = "turbines_" + key + ".json"
+        path = os.path.join(self.out_dir, filename)
+        cached = memo.get(key)
+        if cached is not None and os.path.exists(path):
+            return cached
+        clat, clon, south, west, north, east = geotiles.info(gx, gy, TURBINE_Z)
+        frame = geotiles.frame(gx, gy, TURBINE_Z)
+        features = tuple(f for f in windturbines.near(south, west, north, east)
+                         if geotiles.tile_of(f.lat, f.lon, TURBINE_Z) == (gx, gy))
+        rows = []
+        if features:
+            zoom = demmod.zoom_for(clat, 1.25, demmod.FINE_ZOOM)
+
+            def elev(la, lo):
+                return self.ground(frame, la, lo, self.dem.sample(la, lo, zoom))
+            rows = windturbines.rows_for_features(frame, features, elev, collide=False)
+            if len(rows) != len(features):     # unavailable heights retry; never memoize a partial farm
+                return None
+        pivot = float(np.mean([r["z"] for r in rows])) if rows else 0.0
+        data = {"key": key, "sid": self.sid, "frame": [clat, clon], "pivot": pivot, "turbines": rows}
+        tmp = staging.tmp_for(path)
+        with open(tmp, "w", encoding="utf-8") as target:
+            json.dump(data, target, separators=(",", ":"))
+        staging.replace(tmp, path)
+        result = (f"{self.vfs_dir}/{filename}", len(rows), (clat, clon), pivot)
+        if len(memo) >= 4096:
+            memo.clear()
+        memo[key] = result
+        return result
+
     def country_at(self, lat, lon):
         """The ISO country code at (lat, lon) (its nearest airport's: navgraph.country_near), or None."""
         try:
@@ -1822,7 +1910,8 @@ class Server:
         if self.sign_pool is not None:
             return poolsmod.result_running(self.sign_pool.submit(
                 blockworker.signs_tile, aid, anchor.lat, anchor.lon, anchor.zooms[0], tx, ty, self.out_dir,
-                self.vfs_dir, self.left_hand(anchor), self.mph(anchor), self.country(anchor)), ROAD_TILE_TIMEOUT_S)
+                self.vfs_dir, self.left_hand(anchor), self.mph(anchor), self.country(anchor), dirsignsmod.enabled(self)),
+                ROAD_TILE_TIMEOUT_S)
         g = self.grader_for(anchor)
         zoom = anchor.zooms[0]
 
@@ -1832,7 +1921,7 @@ class Server:
         urban = self.surface.urban if self.surface is not None and hasattr(self.surface, "urban") else None
         return signstream.build_tile(self.mapdata, anchor.frame, aid, tx, ty, elev, self.out_dir, self.vfs_dir,
                                      urban, self.road_widths, self.left_hand(anchor), self.mph(anchor),
-                                     self.country(anchor))
+                                     self.country(anchor), dirsignsmod.enabled(self))
 
     def build_sky_tile(self, aid, ux, uy):
         """buildings.skyline_tile: a skyline (render-only) tile of anchor aid, or None (its cells not at hand: asked
@@ -1901,6 +1990,11 @@ class Server:
         order = sorted((kl for kl in needs if kl[1] in self.WARM_PLACE_LAYERS),
                        key=lambda kl: (self.WARM_ORDER.get(kl[1], 9), where(kl[0]), str(kl[0]), kl[1]))
         n = self.mapdata.warm(order)
+        if getattr(self.sea, "prefetch_full", None) is not None:   # (the coast's sea floors: NOAA's slow requests
+                                                                   # from now, not when a deck asks)
+            own = {(k.x, k.y): where(k) for tx, ty in roadsmod.tiles_near(x, y, roadsmod.SEND_M)
+                   for k in roadsmod.cells_of_tile(anchor.frame, tx, ty)}
+            self.sea.prefetch_full(sorted(own, key=lambda k: (own[k], k)))
         import roadz        # (the measured road heights of the same cells, kept on disk for the road processes)
         if roadz.PROVIDER is not None:
             roadz.PROVIDER.warm(sorted({kl[0] for kl in order if kl[1] == "roads"}, key=lambda k: (where(k), str(k))))
@@ -2034,6 +2128,30 @@ class Server:
         k = self.geo_content_key(gx, gy)
         return k if k is not None and os.path.exists(revisitmod._path(self.cache_dir, "roadsg", k)) else None
 
+    def fast_precache(self, on):
+        """The saved areas' fast mode (areas.py; the mod pauses the game meanwhile): road processes of its own for the
+        world phase (FAST_POOL_*) and the full priority split (every core for the server, the game on its first
+        ones), or both back. Any thread."""
+        with self._fast_lock:
+            if on:
+                if self.fast_pool is None and self.make_fast_pool is not None:
+                    n = fast_pool_size()
+                    try:
+                        self.fast_pool = self.make_fast_pool(n)
+                        log.info("fast pre-cache: %d road processes of its own", n)
+                    except Exception as e:      # (no processes: the road pool builds the world phase)
+                        log.warning("fast pre-cache: no road processes of its own: %s: %s", type(e).__name__, e)
+                self.split_boost(True, "fast pre-cache")
+                return
+            pool, self.fast_pool = self.fast_pool, None
+            if pool is not None:
+                try:
+                    pool.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    pass
+                log.info("fast pre-cache: its road processes closed")
+            self.split_boost(False, "fast pre-cache")
+
     def prebuild_geo(self, gx, gy):
         """Saved areas' world phase: geotile (gx, gy)'s road content built into the revisit cache in a road process
         (blockworker.prebuild_geo), the game sent nothing. -> its revisit key, or None (not complete: tried later)."""
@@ -2043,7 +2161,9 @@ class Server:
         # (beside the session folders, as a session's: a 3dmr.eu model baked there finds the models' cache, its textures'
         # game path and the mod's materials file where the game's own tiles do: buildings._custom_tile_entries, PR #626)
         scratch = os.path.join(self.root, "areas_scratch")
-        return poolsmod.result_running(getattr(self.road_pool, "submit_low", self.road_pool.submit)(
+        fast = self.fast_pool           # (fast mode: its own processes, the game paused: no need to stand back)
+        submit = fast.submit if fast is not None else getattr(self.road_pool, "submit_low", self.road_pool.submit)
+        return poolsmod.result_running(submit(
             blockworker.prebuild_geo, gx, gy, gzoom, scratch, self.buildings, lh, mph, self.gas_stations, buried,
             lamps, country, "/temp/beamngEarth/areas_scratch"), ROAD_TILE_TIMEOUT_S)
 
@@ -2128,6 +2248,8 @@ class Server:
         rwalls = []
         ctx = []
         box = roadsmod.tile_bbox(tx, ty)
+        if props is not None:                       # (the props' side sources, read while the tile is built)
+            self.mapdata.side_prefetch(roadsmod.cells_of_tile(anchor.frame, tx, ty))
         cell_fn = lambda key: self.mapdata.cell(key, layers=("roads",), kind="demand").layers.get("roads")  # noqa: E731
 
         def drawn(la, lo):      # the block's ground: raised over the low arches as the terrain is (_make_heightmap_here)
@@ -2151,7 +2273,8 @@ class Server:
                                                                                   self.anchor_q(anchor)),
                                      terrain_paint=self.surface is not None, cover_out=cover, marks=marks,
                                      roads_out=near_roads, signals=furnituremod.signals_for(self.mapdata, anchor.frame, nkeys),
-                                     nodes=sign_nodes, clearance_out=clearance)
+                                     nodes=sign_nodes, clearance_out=clearance,
+                                     development=developmentmod.for_tile(self.mapdata, anchor.frame, tx, ty))
         # (railway and tram tracks on the ground)
         chunks += railsmod.tile_chunks(anchor.frame, tx, ty, cells, self.country(anchor), urban)
         if self.airports is not None:   # runway markings, drawn by the road mesh like the lane lines
@@ -2288,11 +2411,30 @@ class Server:
             import industry
             garage_sound = (garage_sound + industry.refinery_sound_rows(anchor.frame, tx, ty, self.mapdata, elev)
                             + industry.power_plant_sound_rows(anchor.frame, tx, ty, self.mapdata, elev))
+        import windturbines
+        turbine_rows = windturbines.tile_turbines(anchor.frame, tx, ty, elev)
+        if self.mapdata is not None:
+            import golf
+            try:
+                land_fn = lambda key: self.mapdata.cell(key, layers=("land_use",), kind="demand").layers.get("land_use")
+                flag_rows = golf.rows(anchor.frame, land_fn, box, elev)
+                if flag_rows:
+                    props = (props or []) + flag_rows
+            except Exception as ex:
+                log.warning("golf: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
         return roadsmod.write_tile(self.out_dir, self.vfs_dir, aid, tx, ty, chunks, walks if self.sidewalks else None,
                                    mesh, dmesh, bld, props, wires, park, tunnel_mesh=tmesh, fuel=fuel,
                                    rail_mesh=rmesh, guardrail_rows=guardrail_rows, garage_sound=garage_sound,
                                    custom_entries=custom_entries, wells=oil_wells, bld_none=bool(self.buildings),
-                                   barrier_mesh=barrier_mesh, barrier_chunks=barrier_chunks)
+                                   barrier_mesh=barrier_mesh, barrier_chunks=barrier_chunks,
+                                   turbines=turbine_rows)
+
+    def set_dirs(self, on):
+        """The settings page's Direction signs switch (message direction_signs): True when it changed."""
+        on = bool(on)
+        changed = on != self.dirs_on
+        self.dirs_on = on
+        return changed
 
     def set_gas_stations(self, on):
         """The settings page's "Gas stations" switch (the mod's gas_stations; the user, 2026-10-23: off saves their
@@ -2318,7 +2460,10 @@ class Server:
             return True
         for c in list(self.connections):
             counts = getattr(c, "progress_sent", None)
-            if counts and any(d < w for d, w in counts):
+            # (the (done, wanted) pairs only: send_progress's counts end with the downloads [in flight, MB, MB/s]
+            # since the loading line shows them, and unpacking that as a pair raised ValueError here, every minute,
+            # so the saved areas never downloaded)
+            if counts and any(len(p) == 2 and p[0] < p[1] for p in counts):
                 return True
         return False
 
@@ -2503,7 +2648,8 @@ class Server:
         return round(float(anchor.frame.geodetic_to_enu(la, lo, z)[2]), 3)
 
     def ground(self, frame, la, lo, z):
-        """blockworker.ground here: runways graded in, the sea floor carved."""
+        """blockworker.ground here: runways graded in, the sea floor carved, the land off the roads roughened."""
+        z = np.asarray(z, np.float64) + gradingmod.terrain_bumps(np.asarray(la, np.float64), np.asarray(lo, np.float64))
         if self.airports is not None:
             z = self.airports.apply(la, lo, z)
         if self.sea is not None:
@@ -2866,6 +3012,7 @@ class Server:
             lots = (self.surface.lots(keep["lat"], keep["lon"]) if hasattr(self.surface, "lots") else None)
             if lots:                    # farmland under the carriageways (a field does not cover the asphalt)
                 idx = surfacemod.paint_fields(idx, keep["lat"], keep["lon"], lots)
+                idx = surfacemod.paint_golf(idx, keep["lat"], keep["lon"], lots)   # (golf over it: courses win)
             if road_feats:              # (provisional: the widths' guesses, not measured between the buildings)
                 idx = surfacemod.paint_roads(idx, keep["lat"], keep["lon"], road_feats, heightmap.SQUARE,
                                              self.surface.urban, None if provisional else self.road_widths,
@@ -2895,23 +3042,28 @@ class Server:
                 anchor.tunnels = self.chain_view(anchor, "tunnels", elev, g)
             return anchor.tunnels
 
-    def tunnel_floor(self, anchor):
-        """The floor of a tunnel tube at the anchor's origin (roads.tunnel_floor_at), or None: a teleport into a park
-        arch set the car down on the soil over it, where it hung on the arch's top (2026-10-17)."""
+    def tunnel_floor(self, anchor, e=0.0, n=0.0):
+        """The floor of a tunnel tube at (e, n) of the anchor's frame (roads.tunnel_floor_at), or None: a teleport into a
+        park arch set the car down on the soil over it, where it hung on the arch's top (2026-10-17). No tunnel in the
+        map data within TUNNEL_NEAR_M: None at once (no tunnel profiles made)."""
         if self.mapdata is None:
             return None
-        g = self.grader_for(anchor)
         cell_fn = lambda key: self.mapdata.cell(key, layers=("roads",), kind="demand").layers.get("roads")   # noqa: E731
         try:
+            r = TUNNEL_NEAR_M
+            la, lo, _ = anchor.frame.enu_to_geodetic(np.array([e - r, e + r]), np.array([n - r, n + r]), np.zeros(2))
+            cells = [cell_fn(k) for k in mapcells.cells_for_bbox(float(la.min()), float(lo.min()),
+                                                                float(la.max()), float(lo.max()))]
+            if not any(c is not None and any(s is not None for s in roadsmod.tunnel_specs(c)) for c in cells):
+                return None
+            g = self.grader_for(anchor)
+
             def elev(la, lo):
                 z = self.ground(anchor.frame, la, lo, self.dem.sample(la, lo, gradingmod.PROFILE_ZOOM))
                 return g.apply(la, lo, z, gradingmod.ROAD_LIFT) if g is not None else z
             self.tunnels_of(anchor, elev, g)
-            box = (-40.0, -40.0, 40.0, 40.0)
-            la, lo, _ = anchor.frame.enu_to_geodetic(np.array([-40.0, 40.0]), np.array([-40.0, 40.0]), np.zeros(2))
-            cells = [cell_fn(k) for k in mapcells.cells_for_bbox(float(la.min()), float(lo.min()),
-                                                                float(la.max()), float(lo.max()))]
-            return roadsmod.tunnel_floor_at(anchor.tunnels.parts(cells, box), 0.0, 0.0)
+            box = (e - r, n - r, e + r, n + r)
+            return roadsmod.tunnel_floor_at(anchor.tunnels.parts(cells, box), e, n)
         except Exception:
             log.exception("tunnel floor at anchor %s", anchor.id)
             return None
@@ -4688,6 +4840,9 @@ class Connection:
         self.building_scale = 1.0
         self.bldfar = self.bldsky = self.brfar = None
         self.make_far_trackers(False)
+        self.turbine_geo = False               # separate capability; no road/building radius increase
+        self.turbines = vegetationmod.Tracker(TURBINE_SEND_M, TURBINE_DROP_M, TURBINE_PER_POSE, "turbines",
+                                              geo=True, z=TURBINE_Z)
         self.nav = navgraphmod.Tracker()        # the AI road graph around the player (--traffic on)
         self.traffic_visuals = False            # negotiated visual routes, requested only at night with traffic on
         self.traffic_on = False
@@ -4922,6 +5077,12 @@ class Connection:
             log.debug("update check: %s: %s", type(e).__name__, e)
             return
         if r:
+            import selfupdate
+            b = selfupdate.blocked()
+            if b and not updatesmod.newer(r["latest"], b["version"]):
+                # (Windows would not start that version: offered again, it would be downloaded and blocked again)
+                log.info("update %s not offered: Windows blocked it (%s)", r["latest"], b["by"] or "?")
+                return
             log.info("update available: %s -> %s (%s)", r["current"], r["latest"], r["url"])
             self.send({"type": "update", **r})
 
@@ -5000,7 +5161,7 @@ class Connection:
         if self.s.surface is not None:
             def street():
                 layers, _ = self.s.surface.roads(lat, lon)
-                return geocodemod.nearest_street(layers, lat, lon)
+                return geocodemod.nearest_street(layers, lat, lon, routes=self.s.surface.road_routes(lat, lon))
             try:
                 out["street"] = await loop.run_in_executor(self.s.ui_pool, street)
             except Exception as e:      # a cell being written, an odd feature: no street this time
@@ -5117,18 +5278,19 @@ class Connection:
         name = msg.get("name")
         name = name if isinstance(name, str) else ""
         mode = msg.get("mode") if isinstance(msg.get("mode"), str) else areasmod.DEFAULT_MODE
+        fast = msg.get("fast") is True      # (fast mode: areas.py; the mod pauses the game while it runs)
         route = self._area_route(msg)
         if route is not None:
             ok, info = await asyncio.get_running_loop().run_in_executor(
-                None, self.s.areas.add_route, route[0], route[1], msg.get("half"), name, mode)
+                None, self.s.areas.add_route, route[0], route[1], msg.get("half"), name, mode, fast)
         else:
             ok, info = await asyncio.get_running_loop().run_in_executor(
-                None, self.s.areas.add, msg.get("s"), msg.get("w"), msg.get("n"), msg.get("e"), name, mode)
+                None, self.s.areas.add, msg.get("s"), msg.get("w"), msg.get("n"), msg.get("e"), name, mode, fast)
         res = {"id": msg.get("id"), "ok": ok, ("area" if ok else "error"): info}
         self.send(self.s.areas_message(res))
 
     async def area_cmd(self, msg):
-        """{"id", "area", "op": pause | resume | delete} -> areas {..., "result": {"id", "ok"}}."""
+        """{"id", "area", "op": pause | resume | delete | fast | slow} -> areas {..., "result": {"id", "ok"}}."""
         if self.s.areas is None:
             return
         area, op = msg.get("area"), msg.get("op")
@@ -5229,7 +5391,7 @@ class Connection:
             self.s.connections.discard(self)
             self.s.slots_let_go(list(self.slot_holds))
             self.slot_holds = {}
-            for tr in (self.roads, self.signs, self.veg, self.bldfar, self.bldsky, self.brfar, self.nav,
+            for tr in (self.roads, self.signs, self.veg, self.bldfar, self.bldsky, self.brfar, getattr(self, "turbines", None), self.nav,
                        self.distant_traffic, self.distant_traffic_far):
                 if tr is not None:
                     tr.close()
@@ -5338,6 +5500,7 @@ class Connection:
                 self.distant_traffic.sent.clear()
                 self.distant_traffic_far.sent.clear()
         elif kind == "hello":
+            self.s.check_user_dir(self, msg.get("userPath"))
             lay = self.s.layout
             fmt = msg.get("format", lay.format)
             if msg.get("protocol") != PROTOCOL:
@@ -5418,6 +5581,9 @@ class Connection:
                 self.make_far_trackers(far_geo)
             if far_geo:
                 m["farGeo"] = buildingsmod.FAR_GEO
+            self.turbine_geo = msg.get("turbineGeo") == TURBINE_GEO
+            if self.turbine_geo:
+                m["turbineGeo"] = TURBINE_GEO
             # ... and the far field's levels from 3 up as global tiles when it places those (hello.globalFar:
             # farfield.lua's GLOBAL_FAR; geotiles phase 3b, --global-far): built once, kept across rebases
             self.ready_set = msg.get("readySet") == 1      # (the mod takes 'terrain_ready_set': follow.preferReady)
@@ -5504,6 +5670,8 @@ class Connection:
         elif kind == "open_page":               # the update notice's button: the releases page (updates.open_page)
             if not updatesmod.open_page(msg.get("url")):
                 log.info("open_page: refused %r", msg.get("url"))
+        elif kind == "space_clouds_req":        # the camera above the clouds: today's clouds round it (spaceclouds.py)
+            self.spawn(self.space_clouds(msg))
         elif kind == "terrain_patch":           # ground under another vehicle's collision island (terrainpatch.lua)
             self.spawn(self.terrain_patch(msg))
         elif kind == "cache":
@@ -5532,6 +5700,9 @@ class Connection:
             self.signs = signstream.Tracker()
         elif kind == "highway_signs":           # the settings page's switch: no sign tiles built while it is off
             self.signs_on = bool(msg.get("on", True))
+        elif kind == "direction_signs":         # the settings page's switch: the sign tiles again, with or without
+            if self.s.set_dirs(msg.get("on")):
+                self.signs.refresh()
         elif kind == "graphics":                # the settings page's graphics knobs (set_graphics)
             self.set_graphics(msg)
         elif kind == "gas_stations":            # the settings page's switch: the road tiles again, with or without
@@ -5592,6 +5763,35 @@ class Connection:
         """K(L) of this connection's far field: the server's times the mod's terrain detail (lodScale)."""
         k, s = self.s.kfun, self.lod_scale
         return k if s == 1.0 else (lambda lvl: k(lvl) * s)
+
+    async def space_clouds(self, msg):
+        """The mod's spaceclouds.lua: the cloud shell round the point under a camera far above the clouds (lat, lon,
+        alt m above sea level), in anchorId's frame; answered with its files (or nothing: no tile could be had)."""
+        aid = msg.get("anchorId")
+        try:
+            lat, lon, alt = float(msg["lat"]), float(msg["lon"]), float(msg["alt"])
+        except (KeyError, TypeError, ValueError):
+            return
+        if (aid not in self.s.anchors or not all(math.isfinite(v) for v in (lat, lon, alt))
+                or abs(lat) > 90 or abs(lon) > 180 or not 0 <= alt <= 2_000_000):
+            return
+        import spaceclouds as spacecloudsmod
+        frame = self.s.anchors[aid].frame
+        sun = None                              # (the game's sun seen from there: its night side's lights follow it)
+        try:
+            az, el = float(msg["sunAz"]), float(msg["sunEl"])
+            if math.isfinite(az) and math.isfinite(el) and -90 <= el <= 90:
+                sun = spacecloudsmod.subsolar_from(lat, lon, az, el)
+        except (KeyError, TypeError, ValueError):
+            pass
+        try:
+            res = await asyncio.get_running_loop().run_in_executor(
+                None, spacecloudsmod.build, self.s.out_dir, self.s.vfs_dir, frame, lat, lon, alt, self.s.net, sun)
+        except Exception as e:
+            log.warning("space clouds: %s: %s", type(e).__name__, e)
+            return
+        if res is not None:
+            self.send(dict(res, type="space_clouds", anchorId=aid))
 
     async def terrain_patch(self, msg):
         """The mod's terrainpatch.lua: the ground's collision patch over box (x0, y0, x1, y1, the active anchor's
@@ -5776,13 +5976,10 @@ class Connection:
             # (a provisional block's groundZ is at the place already: ground_z_at carves the sea floor, which waits on
             # the water cells: 30 s of a fresh place's teleport, 2026-10-25)
             gz = await asyncio.get_running_loop().run_in_executor(self.s.ui_pool, self.s.ground_z_at, anchor, *place)
-        floor_z = None                  # in a tunnel: its floor under the ground (the mod moves the car down onto it
-        if gz is not None and not provisional and place is None:   # once the tube's collision is there: set down in
-                                                                   # it at once, it fell)
-            fl = await asyncio.get_running_loop().run_in_executor(self.s.ui_pool, self.s.tunnel_floor, anchor)
-            if fl is not None and fl < gz - TUNNEL_FLOOR_UNDER_M:
-                floor_z = round(fl + gradingmod.ROAD_LIFT, 3)
-                log.info("anchor %d: in a tunnel, its floor %.1f under the ground %.1f", anchor.id, floor_z, gz)
+        # in a tunnel: its floor under the ground, sent after (tunnel_floor_late: the mod moves the car down onto it once
+        # the tube's collision is there). It was asked only at the origin of a full block, and since snapped anchors and
+        # provisional first blocks (2026-10-25) a teleport into a tunnel left the car on the hill over it.
+        floor_z = None
         log.info("anchor %d (%.5f, %.5f) ready in %.2f s, terrain at (%.0f, %.0f), groundZ %s; dem %s",
                  anchor.id, lat, lon, time.perf_counter() - t0, cx, cy,
                  "n/a" if gz is None else f"{gz:.1f}",
@@ -5795,8 +5992,21 @@ class Connection:
             ready["fuelShapes"] = gasstationsmod.style_shapes(gasstationsmod.style_of(lat, lon))
         self.send(ready)
         self.status(f"Terrain ready ({time.perf_counter() - t0:.1f} s)")
+        if gz is not None and declared:     # (a player's teleport: not a rebase while driving, nor the level start)
+            self.spawn(self.tunnel_floor_late(anchor, place or (0.0, 0.0), gz))
         if provisional:
             self.spawn(self.refine_first(anchor, cx, cy, info.get("ter"), t0))
+
+    async def tunnel_floor_late(self, anchor, place, gz):
+        """A teleport's spot in a tunnel: its floor (more than TUNNEL_FLOOR_UNDER_M under the ground gz there) sent as
+        'tunnel_floor' (core.floorCheck sets the car down on it once the tube collides); nothing when none."""
+        e, n = float(place[0]), float(place[1])
+        fl = await asyncio.get_running_loop().run_in_executor(self.s.ui_pool, self.s.tunnel_floor, anchor, e, n)
+        if fl is None or fl >= gz - TUNNEL_FLOOR_UNDER_M:
+            return
+        z = round(fl + gradingmod.ROAD_LIFT, 3)
+        log.info("anchor %d: in a tunnel at (%.0f, %.0f), its floor %.1f under the ground %.1f", anchor.id, e, n, z, gz)
+        self.send({"type": "tunnel_floor", "anchorId": anchor.id, "floorZ": z, "x": round(e, 3), "y": round(n, 3)})
 
     async def refine_first(self, anchor, cx, cy, provisional_ter, t0):
         """The graded first block (roads levelled, tunnels, the sea floor) in place of the provisional one: built as
@@ -6261,6 +6471,11 @@ class Connection:
             if source is not None and self.signs_on:      # (after the roads: signs only for road tiles sent)
                 self.signs.on_pose(self, aid, *self.focus, asyncio.get_running_loop(), self.s.build_signs_tile,
                                    ready, version=source.tags.known())
+        if self.turbine_geo and aid == self.active:
+            anchor = self.s.anchors.get(aid)
+            if anchor is not None:
+                self.turbines.on_pose(self, aid, *self.focus, asyncio.get_running_loop(), self.s.build_turbines_geo,
+                                      view=self.view_at, frame=anchor.frame)
         if self.s.veg is not None and aid == self.active:
             anchor = self.s.anchors.get(aid)
             if anchor is not None:                            # a teleport's cells built at once, ahead
@@ -7232,7 +7447,16 @@ async def main_async(args):
             "road tile", args.road_processes, mp_context=ctx, initializer=blockworker.init,
             initargs=(args.cache_dir, args.offline, True, args.grading == "on", args.road_widths == "on",
                       args.surface == "on", None, logging.getLogger().level,
-                      args.airports == "on", args.sea == "on", NICE_ROADS, roadsmod.ROADS_IN_GROUND, road_surface))
+                      args.airports == "on", args.sea == "on", NICE_ROADS, roadsmod.ROADS_IN_GROUND))
+    make_fast_pool = None
+    if road_pool is not None:
+        def make_fast_pool(n):          # (the saved areas' fast mode: Server.fast_precache)
+            return poolsmod.RespawningPool(
+                "fast pre-cache", n, mp_context=ctx, initializer=blockworker.init,
+                initargs=(args.cache_dir, args.offline, True, args.grading == "on", args.road_widths == "on",
+                          args.surface == "on", None, logging.getLogger().level,
+                          args.airports == "on", args.sea == "on", NICE_ROADS, roadsmod.ROADS_IN_GROUND,
+                          road_surface))
     far_bld_pool = None
     if road_pool is not None and args.buildings == "on":
         far_bld_pool = poolsmod.RespawningPool(   # far building tiles (blockworker.far_buildings_tile)
@@ -7264,6 +7488,7 @@ async def main_async(args):
                     far_bld_pool=far_bld_pool,
                     sea=seacarvemod.SeaCarver(mapdata, args.cache_dir) if args.sea == "on" else None,
                     vegetation=(vegetationmod.Vegetation(mapdata, args.cache_dir) if args.trees == "on" else None))
+    server.make_fast_pool = make_fast_pool
     server.update_check = args.update_check == "on"
     server.geo_tiles = args.geo_tiles == "on"
     server.global_far = args.global_far == "on"
@@ -7313,6 +7538,16 @@ async def main_async(args):
     # logs the main thread's stack when a beat is late, so the stall names its cause.
     beat = [time.perf_counter()]
     main_ident = threading.get_ident()
+    if LOOP_RAISE:          # (this thread: the event loop's)
+        import budget
+        try:
+            how = budget.raise_thread()
+            if how:
+                log.info("event loop priority: %s", how)
+        except (OSError, AttributeError) as e:
+            log.warning("could not raise the event loop's priority: %s", e)
+    if SWITCH_MS:
+        sys.setswitchinterval(SWITCH_MS / 1000.0)
 
     async def loop_beat():
         while True:
@@ -7496,7 +7731,8 @@ def prune_own_caches(cache_dir, started=None):
             log.info("cache: mapdata-mirror cut back: %d layer files' mirrors removed", n)
     except Exception as e:
         log.warning("cache: mapdata-mirror not cut back: %s", e)
-    for sub, mb, match in (("seacarve", seacarvemod.RAW_MB, lambda n: n.endswith(".raw.npy")),
+    for sub, mb, match in (("seacarve", seacarvemod.RAW_MB, lambda n: n.endswith(".rawb.npy")),
+                           ("seacarve", 0, lambda n: n.endswith(".raw.npy")),  # (whole rasters, before 2026-11-05)
                            (os.path.join("dem", "decoded"), demmod.MIRROR_MB,
                             lambda n: n.endswith((".npy", ".f32z"))),
                            ("peercache", peerworkmod.CACHE_BYTES / 1e6, None),
@@ -7619,6 +7855,25 @@ def machine_profile(args, small):
         args.road_processes = budget.road_processes()
         log.info("road-tile processes: %d (%d threads, %.0f GB)", args.road_processes, os.cpu_count() or 0,
                  budget.total_gb() or 0)
+
+FAST_POOL_KEEP = 2          # the saved areas' fast mode: its road processes, one per CPU thread but these ...
+FAST_POOL_GB = 2.0          # ... and at most one per this much memory (a road process holds ~1-1.5 GB at work) ...
+FAST_POOL_MAX = 24          # ... and at most this many
+FAST_POOL_FREE_GB = 1.5     # ... and one per this much of the memory free when it starts (the game, paused, keeps its
+                            # own; sized from the total alone, a 32 GB PC with the game and the normal road pool running
+                            # could be pushed into swap: PR #773's merge review, 2026-11-06)
+
+
+def fast_pool_size(cpus=None, gb=None, free=None):
+    """The road processes of the saved areas' fast mode on this computer (FAST_POOL_*): by its CPU threads, its memory
+    and the memory free now. Pure given its arguments."""
+    import budget
+    cpus = (os.cpu_count() or 2) if cpus is None else cpus
+    gb = (budget.total_gb() or 8.0) if gb is None else gb
+    free = budget.free_gb() if free is None else free
+    by_free = int(free / FAST_POOL_FREE_GB) if free is not None else FAST_POOL_MAX
+    return max(2, min(FAST_POOL_MAX, cpus - FAST_POOL_KEEP, int(gb / FAST_POOL_GB), by_free))
+
 
 def main():
     # (this run's id, inherited by its worker processes: roadz keeps one lidar decision per map cell and run in it)

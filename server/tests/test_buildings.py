@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from unittest import mock
 
@@ -616,6 +617,44 @@ class PartsTest(unittest.TestCase):
         P = bld.build(items)[0]
         self.assertAlmostEqual(P[:, 2][P[:, 2] < 90.5].max(), 90.0, delta=0.01)
 
+    def _items(self, part_rect, part_bottom=np.nan, height=10.0):
+        import geodesy
+        f = geodesy.EnuFrame(59.42, 24.79)
+
+        def ll(x, y, w, d):
+            e = np.array([x, x + w, x + w, x, x]); n = np.array([y, y, y + d, y + d, y])
+            la, lo, _ = f.enu_to_geodetic(e, n, 0.0)
+            return np.stack([lo, la], 1)
+        b = Feats(["B"], [ll(-100, -125, 200, 250)], **{"class": ["retail"], "height": [height], "has_parts": [1.0],
+                                                         "min_height": [np.nan]})
+        parts = Feats(["p1"], [ll(*part_rect)], building_id=["B"], height=[5.0], min_height=[part_bottom],
+                      num_floors=[np.nan], min_floor=[np.nan])
+        return bld.tile_buildings(f, -256, -256, 256, 256, [b], lambda la, lo: np.zeros(np.shape(la)),
+                                  part_layers=[parts])
+
+    def test_a_stray_part_does_not_erase_its_building(self):
+        """Ülemiste keskus, Tallinn (GitHub #608): a 51,000 m² mall mapped with height 10 and one 452 m² building
+        part (height 5) was drawn as that part alone, the rest of it bare ground. Parts covering under PARTS_COVER_MIN
+        of the outline: the outline is drawn too, the parts on it."""
+        items = self._items((60, 60, 21, 22))
+        tops = sorted(round(s.height + (s.min_h or 0.0)) for s, _, _ in items)
+        self.assertEqual(tops, [5, 10], "the part and the building")
+        whole = max(items, key=lambda it: abs(bld._area2(it[0].ring)))
+        self.assertAlmostEqual(abs(bld._area2(whole[0].ring)) / 2, 50000.0, delta=500.0)
+        with unittest.mock.patch.object(bld, "PARTS_COVER_ON", False):
+            self.assertEqual([round(s.height) for s, _, _ in self._items((60, 60, 21, 22))], [5], "(off: as before)")
+
+    def test_parts_covering_most_of_it_still_draw_it(self):
+        items = self._items((-100, -125, 200, 150))         # (60 % of the outline)
+        self.assertEqual([round(s.height) for s, _, _ in items], [5], "the parts, not the footprint")
+
+    def test_a_structure_in_parts_off_the_ground_keeps_its_gaps(self):
+        """A part off the ground (an arcade's roof, a tower's platform): the building is modelled in parts, its
+        outline its overall box: not drawn, however little the parts cover."""
+        items = self._items((60, 60, 21, 22), part_bottom=3.0)
+        self.assertEqual(len(items), 1, "the part alone")
+        self.assertEqual(len(self._items((60, 60, 21, 22), height=1.0)), 1, "(an outline mapped as a base: its part)")
+
 
 class OverRoadTest(unittest.TestCase):
     def setUp(self):
@@ -646,6 +685,19 @@ class OverRoadTest(unittest.TestCase):
         self.assertAlmostEqual(over.min_h + over.height, 16.0, delta=0.01, msg="its top where it was")
         self.assertEqual(house.min_h, 0.0)
         self.assertAlmostEqual(bld.road_through(over.ring, [street - 0]), 80.0, delta=2.5)
+
+    def test_a_huge_footprint_with_streets_in_it_is_a_site_left_out(self):
+        # OSM's 1.35 km2 "Blueberry Commons" by I-94 (Huntley MT, 2026-11-05): a planned development tagged building,
+        # its streets inside, lifted over them as a 15 m wall over the prairie. A footprint over SITE_M2 that public
+        # roads run through is left out; the same size without a road in it (a real warehouse) stays
+        side = 400.0                                            # 16 ha
+        b = Feats(["S"], [self.ll(-72, -72, side, side)], **{"class": ["retail"], "height": [15.0]})
+        street = np.array([[-100.0, 128.0], [400.0, 128.0]])
+        ground = lambda la, lo: np.zeros(np.shape(la))
+        self.assertGreater(side * side, bld.SITE_M2)
+        self.assertEqual(bld.tile_buildings(self.f, 0, 0, 256, 256, [b], ground, roads_xy=[street]), [])
+        far = np.array([[-100.0, 600.0], [400.0, 600.0]])
+        self.assertEqual(len(bld.tile_buildings(self.f, 0, 0, 256, 256, [b], ground, roads_xy=[far])), 1)
 
     def test_a_geosearch_hit_is_returned_as_custom(self):
         # a 3dmr.eu model found by geo-search (road_tile_items, threedmr.search_ids/model_info): the footprints

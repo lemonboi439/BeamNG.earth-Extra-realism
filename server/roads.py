@@ -613,7 +613,19 @@ def _cell_ranges(feats, load_only=False):
     t0 = time.perf_counter()
     try:
         raw = [raw_level_ranges(feats, i) for i in range(len(feats))]
-        lvl = [level_ranges(feats, i, _home=False) for i in range(len(feats))]
+        # (most roads have no range, no end near a bridge's and no lidar answer: their level ranges are [] whatever the
+        # chain below does, and its per-feature calls were ~1 s of CPU a cell on first visits, Fells Point 2026-11-06)
+        near = _near_bridge_ends(feats)
+        answers = _lidar_answers(feats) if LIDAR_GAPS_ON else {}
+        lvl_memo = st.setdefault("_level_ranges", {})
+        lvl = []
+        for i in range(len(feats)):
+            if (near is not None and not raw[i] and not near[i] and not answers.get(str(feats.ids[i]))
+                    and i not in lvl_memo):
+                lvl_memo[i] = []
+                lvl.append([])
+            else:
+                lvl.append(level_ranges(feats, i, _home=False))
     except BaseException:
         if mine:
             import xproc
@@ -2630,7 +2642,8 @@ def _road_specs(feats, urban_fn, left_hand):
 # centre line, a dry-stone retaining wall right at the uphill edge and a stone parapet along the valley's; drawn 8 m
 # wide with a centre line on a 20-24 m graded bench, the walls and the parapets set back off the road or missing). A
 # rural road whose line has MOUNTAIN_SWITCHBACKS switchbacks or more (MOUNTAIN_TURN_DEG of turn within 2 x
-# MOUNTAIN_SPAN_M: earthfast.tight_bends) and no mapped width or lane count is MOUNTAIN_ROAD_M wide, without edge strips
+# MOUNTAIN_SPAN_M: earthfast.tight_bends), no mapped width and no more than MOUNTAIN_MAX_LANES mapped lanes is
+# MOUNTAIN_ROAD_M wide, without edge strips
 # or a centre line, and the grading keeps no verge beside it (grading.shoulder). Its whole line counts: the map's road
 # is one feature over the pass, the same in every cell.
 MOUNTAIN_CLASSES = {"secondary", "tertiary", "unclassified"}
@@ -2638,6 +2651,9 @@ MOUNTAIN_SWITCHBACKS = 3
 MOUNTAIN_SPAN_M = 20.0
 MOUNTAIN_TURN_DEG = 150.0
 MOUNTAIN_ROAD_M = 6.0
+MOUNTAIN_MAX_LANES = 2     # a mapped lanes=2 is any two-way road's count, not a width: the Stelvio's own way got it
+                           # with the per-way lane tags (2026-11-04), and the pass was 7.1 m again with a centre line,
+                           # a 20 m bench and walls standing between its hairpin legs (the user, 2026-11-05)
 MOUNTAIN_ON = os.environ.get("BNE_MOUNTAIN_ROADS", "on") != "off"
 
 
@@ -2707,7 +2723,7 @@ def _mountain_roads(feats, specs):
     out = list(specs)
     for i, sp in enumerate(specs):
         if sp is None or sp.urban or sp.cls not in MOUNTAIN_CLASSES or sp.kind != "paved" or sp.oneway \
-                or sp.median or sp.lanes is not None:
+                or sp.median or (sp.lanes or 0) > MOUNTAIN_MAX_LANES:
             continue
         if _rule_value(rules.get("width"), i) is not None or _osm(feats, "width", i, *OSM_WIDTH_M) is not None:
             continue
@@ -7816,6 +7832,7 @@ def retaining_walls(frame, roads, elev, exact, decks=()):
     import roadmesh
     x0, y0, x1, y1 = exact
     pts_all, info = [], []
+    centres = []                # (the road's own ground along it, read with the probes below)
     for fid, spec, pts, _ in roads:
         if spec.kind not in BUILT or len(pts) < 2:
             continue
@@ -7827,6 +7844,7 @@ def retaining_walls(frame, roads, elev, exact, decks=()):
         inside = (xy[:, 0] >= x0 - 2) & (xy[:, 0] < x1 + 2) & (xy[:, 1] >= y0 - 2) & (xy[:, 1] < y1 + 2)
         if not inside.any():
             continue
+        centres.append(xy)
         d = np.gradient(xy, axis=0)
         d /= np.maximum(np.hypot(*d.T), 1e-9)[:, None]
         nl = np.stack([-d[:, 1], d[:, 0]], axis=1)
@@ -7850,7 +7868,19 @@ def retaining_walls(frame, roads, elev, exact, decks=()):
     def ground(P):
         la, lo, _ = frame.enu_to_geodetic(P[:, 0], P[:, 1], np.zeros(len(P)))
         return np.asarray(frame.geodetic_to_enu(la, lo, np.asarray(elev(la, lo), np.float64))[2], np.float64)
-    g = ground(np.concatenate(pts_all))
+    nprobe = sum(len(P) for P in pts_all)
+    g_all = ground(np.concatenate(pts_all + centres))
+    g = g_all[:nprobe]
+    # the road's height along it from the ground it is painted into, not a straight line between its map points: those
+    # can be 100 m apart, and across a creek whose bridge has no deck the line ran 3 m over the drawn road, which read as
+    # a raised road and got parapets down to the ground (GitHub #782, Western Australia: 3.5 m stone walls both sides of
+    # Port Gregory Road at its creek crossings)
+    k = nprobe
+    for n, item in enumerate(info):
+        if n % 2 == 0:                  # (two sides a road: one centre line)
+            zc = g_all[k:k + len(item[0])]
+            k += len(item[0])
+        info[n] = (item[0], zc) + tuple(item[2:])
     # the graded ground at the steps out from the road only where a wall or a parapet can stand: a side whose probe
     # finds no cutting (_wall_runs) and that gets no parapets has no use for them (most of a town's streets: 8 of 9 of
     # the ground lookups, 2026-10-25)
@@ -8860,7 +8890,7 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
                buried=0.0, lamp_region=None, country=None,
                walls=None, deck_context=None, ground=None, terrain_paint=True, cover_out=None, walk_cuts=(),
                signals=None, marks=None, roads_out=None, skin_margin=0.0, walks_raw=None, nodes=None,
-               clearance_out=None):
+               clearance_out=None, development=None):
     """The chunks of one tile. cells: the mapgeom.Features of the "roads" layer of every cell touching
     the tile; elev(lat, lon) -> metres (the DEM); urban_fn: as road_specs. Features in several cells are
     taken once (by id). The carriageways, then each road's sidewalks / gutters / markings (extras), cut
@@ -8877,7 +8907,9 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
     world (a seam-straddling crosswalk drawn by both tiles, each its half); walks_raw: a list that gets the sidewalk
     pieces before they are put on the ground (the skin drapes them on its anchor's). clearance_out: a list that gets
     the shared furniture.RoadClearance for this tile's tapered ground roads and generated bridge decks (not tunnel
-    vaults), also used by powerlines.tile_lines. Pure given its inputs (sorted by feature id)."""
+    vaults), also used by powerlines.tile_lines. development: a local context (development.py) sampled only by
+    furniture.place for the street trees, hydrants, benches and bins on these sidewalks. Pure given its inputs (sorted
+    by feature id)."""
     own_box = tile_bbox(tx, ty)                 # (a geotile's knows its own points: box_owns)
     x0, y0, x1, y1 = own_box
     import furniture
@@ -9305,7 +9337,7 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
         props.extend(furniture.place(roads, walks, own_box, wires=wires, town=bool(town), left_hand=left_hand,
                                      decks=[(p, h) for p, h, _depth in traffic_decks], clearance=clearance,
                                      signals=signals, buried=buried, region=lamp_region, country=country,
-                                     priority=priority, ground=ground,
+                                     priority=priority, ground=ground, development=development,
                                      lighting={fid: str(f.attrs["osm_lit"][i]).strip().lower()
                                                for fid, (f, i, _sp) in seen.items() if "osm_lit" in f.attrs}))
     aisles = {fid for fid, (f, i, sp) in seen.items()
@@ -9895,7 +9927,7 @@ def sound_boxes(chunks):
 def write_tile(out_dir, vfs_dir, aid, tx, ty, chunks, walks=None, road_mesh=None, deck_mesh=None, bld=None,
                props=None, wires=None, park=None, tunnel_mesh=None, fuel=None,
                rail_mesh=None, garage_sound=(), wells=(), guardrail_rows=None, custom_entries=None, decals=True,
-               bld_none=False, barrier_mesh=None, barrier_chunks=(), rail_tunnel=None, rail_tube=()):
+               bld_none=False, barrier_mesh=None, barrier_chunks=(), rail_tunnel=None, rail_tube=(), turbines=()):
     """Write a tile's chunks (atomically), its sidewalk mesh (walks: build_tile's runs, if any:
     `walks_<a>_<tx>_<ty>.cdae`, announced in the tile as "walk": {shape, pos}) and its road mesh
     (road_mesh: roadmesh.build's result: `road_<a>_<tx>_<ty>.cdae`, "road": {shape, pos}; the mod then
@@ -9917,6 +9949,8 @@ def write_tile(out_dir, vfs_dir, aid, tx, ty, chunks, walks=None, road_mesh=None
         data["sound"] = sound
     if wells:                                               # oil wells' pump jacks (oilwells.tile_wells)
         data["wells"] = list(wells)
+    if turbines:                                            # mapped OSM wind turbines (near collision owners)
+        data["turbines"] = list(turbines)
     if road_mesh is not None:
         x0, y0, _, _ = tile_bbox(tx, ty)
         shape = f"road_{aid}_{tx}_{ty}.cdae"
