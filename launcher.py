@@ -55,7 +55,8 @@ GAME_CLOSED_S = 5           # the launcher sat 30 s after the player closed the 
 WINDOWS_GAME_GONE_S = 3     # Windows has no Steam container restart gap; allow prompt relaunch
 GAME_START_S = 180          # waiting for the game's process after asking Steam
 SERVER_START_S = 120        # imports/startup must finish before the game is launched
-PROCESS_QUERY_S = 3         # a stuck process query must not hang the launcher
+PROCESS_QUERY_S = 10        # a process query under 100 % server load took over 3 s and the launcher read the game as
+                            # closed, stopping its server (Old Kent Road, 2026-11-06): a stuck query may not hang it
 DIRECT_FAIL_S = 20          # a direct start that ends this soon did not work (no Steam client): through Steam
 
 
@@ -427,11 +428,18 @@ def game_pids():
         # bytes, decoded leniently: on a non-English Windows tasklist's "no tasks" message is in the console's code
         # page (German "ü" = 0x81 in cp850), which text=True's cp1252 could not decode (a player's report,
         # 2026-10-17: the launcher stopped with UnicodeDecodeError and r.stdout None)
-        try:
-            r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {GAME_EXE_WIN}", "/FO", "CSV", "/NH"],
-                               capture_output=True, timeout=PROCESS_QUERY_S)
-        except (OSError, subprocess.TimeoutExpired):
-            return []
+        r = None
+        for _attempt in range(2):
+            try:
+                r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {GAME_EXE_WIN}", "/FO", "CSV", "/NH"],
+                                   capture_output=True, timeout=PROCESS_QUERY_S)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+            except OSError:
+                return []
+        if r is None:               # (both queries timed out under load: unknown, not "closed")
+            return None
         text = (r.stdout or b"").decode("utf-8", errors="replace")
         out = []
         for line in text.splitlines():
@@ -486,7 +494,8 @@ def game_connected():
 
 
 def game_alive():
-    return bool(game_pids()) or game_connected()
+    pids = game_pids()
+    return pids is None or bool(pids) or game_connected()     # (None: the query failed, assume it runs)
 
 
 GAME_CLOSING_S = 8.0            # game_still_running: a game seen at the start is watched this long for closing

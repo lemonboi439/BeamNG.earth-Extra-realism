@@ -57,6 +57,7 @@ class WordingTest(unittest.TestCase):
         for name, text in credits.IMAGERY.items():
             self.assertTrue(imagery.SOURCES[name].attribution.startswith(text), name)
         # EOX: their prescribed June 2026 wording, with the layer's data year
+        self.assertIn("Copernicus Sentinel data 2025)", credits.IMAGERY["eox2025"])
         self.assertIn("Copernicus Sentinel data 2023)", credits.IMAGERY["eox2023"])
         self.assertIn("Copernicus Sentinel data 2016 & 2017)", credits.IMAGERY["eox2016"])
         self.assertEqual(set(credits.IMAGERY), set(imagery.SOURCES))

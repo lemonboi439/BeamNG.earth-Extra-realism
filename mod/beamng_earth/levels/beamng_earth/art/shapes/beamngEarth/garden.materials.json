@@ -1,0 +1,54 @@
+{
+  "bne_garden_brick": {
+    "name": "bne_garden_brick",
+    "mapTo": "bne_garden_brick",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "31e61ea0-829f-5b98-b9b5-d1ff94cd9e86",
+    "Stages": [
+      {
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_garden_brick_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_garden_brick_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_garden_brick_r.data.dds",
+        "metallicFactor": 0,
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "vertColor": true
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false
+  },
+  "bne_garden_stone": {
+    "name": "bne_garden_stone",
+    "mapTo": "bne_garden_stone",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "719d6577-31a5-516f-a752-22a737397c55",
+    "Stages": [
+      {
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_sheet_stone_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_sheet_stone_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_sheet_stone_r.data.dds",
+        "metallicFactor": 0,
+        "baseColorFactor": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "vertColor": true
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false
+  }
+}

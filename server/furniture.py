@@ -585,6 +585,7 @@ POLE_LAMP_Z = 7.0           # m above the pole's base
 HYDRANT_SPACING = 120.0
 BENCH_SPACING = 140.0
 BIN_SPACING = 90.0
+GB_BIN_SPACING = 160.0          # a UK residential street's litter bin: sparser than a high street's, both footways
 BENCH_YAW = 90.0            # the bench model's front is its local +y (the yaw puts +x toward the road)
 
 # Conservative local boxes of the stock collision meshes, in metres at trees.lua's catalog height.
@@ -979,6 +980,12 @@ def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=Fals
             put(G_BENCH, BENCH_SPACING, _h01(fid, side, "bench") * BENCH_SPACING, w - 0.45, 0.9,
                 lambda out: _yaw(-out[0], -out[1]) + BENCH_YAW)
             put(G_BIN, BIN_SPACING, _h01(fid, side, "bin") * BIN_SPACING, 0.7, 1.1, lambda out: _yaw(-out[0], -out[1]))
+        elif spec.urban and str(country or "").upper() in ("GB", "IE") \
+                and spec.cls in ("residential", "unclassified", "living_street"):
+            # a London residential street's litter bin at the curb (the user asked for trash cans; MAJOR left
+            # these streets without any)
+            put(G_BIN, GB_BIN_SPACING, _h01(fid, side, "bin") * GB_BIN_SPACING, 0.7, 1.1,
+                lambda out: _yaw(-out[0], -out[1]))
     rows.extend(junction_props(roads, box, curb_h, left_hand, decks, signals, country, priority, ground, clearance))
     for fid, spec, line, _ in roads:
         if fid in lit or len(line) < 2:

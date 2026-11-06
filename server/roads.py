@@ -191,6 +191,13 @@ DRAIN_IN, DRAIN_EVERY = 2.5, 90.0
 GUTTER = {"m": "gutter1", "tl": 8.0, "p": 14, "w": 0.5}                  # at the curb line
 CENTRE = {"tl": 12.0, "p": 6, "w": 0.12, "gap": 0.12}                    # a double line: two lines this far from the centre
 EDGE_LINE = {"m": "line_white", "tl": 6.4, "p": 2, "w": 0.15, "inset": 0.3}
+# Kerbside double yellows (TSRGD 1017: two 100 mm lines, 100 mm apart), along UK/Irish town streets' footways.
+KERB_YELLOW_COUNTRIES = frozenset({"GB", "IE", "IM", "JE", "GG"})
+# (primary roads are often TfL red routes: no yellow there without red-route data, so London's A-roads are left plain)
+KERB_YELLOW_CLASSES = frozenset({"residential", "unclassified", "tertiary", "secondary"})
+KERB_YELLOW_W = 0.10
+KERB_YELLOW_GAP = 0.10
+KERB_YELLOW_INSET = 0.35        # m from the kerb to the first line's centre (the gutter is 0.5 m)
 # The asphalt's edge where no curb ends it: East Coast USA's decal (a ragged opaque edge of gravel and dirt fading
 # into the ground; its texture's u = 1 side lies on the asphalt, the opaque edge EDGE_DECAL_AT across it). The
 # ground photo is ~2 m a pixel and the terrain's materials change on its 2 m grid: the edge was blurred and stepped
@@ -2818,20 +2825,63 @@ def is_ring(feats, i):
     return col is not None and str(col[i]) in RING_JUNCTIONS
 
 
+def _ring_groups(feats, rings):
+    """Connected groups of roundabout ring features (their Overture segments share end points). One roundabout's
+    segments often have different lane counts (Rotherhithe: 1-3), and widening each by its own count made the
+    circulatory roadway bulge and neck; a group takes one width."""
+    parent = {i: i for i in rings}
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    at = {}
+    for i in rings:
+        a = feats.coord_off[feats.ring_off[feats.part_off[i]]]
+        b = feats.coord_off[feats.ring_off[feats.part_off[i + 1]]]
+        pts = feats.lonlat[a:b]
+        if len(pts) < 2:
+            continue
+        for q in (pts[0], pts[-1]):
+            key = (round(float(q[0]), 6), round(float(q[1]), 6))     # ~0.1 m at London's latitude
+            if key in at:
+                union(i, at[key])
+            else:
+                at[key] = i
+    groups = {}
+    for i in rings:
+        groups.setdefault(find(i), []).append(i)
+    return list(groups.values())
+
+
 def _rings(feats, specs):
-    """specs with the mapped roundabout rings widened to ring_width (or their mapped width, if wider). Pure."""
+    """specs with each mapped roundabout's segments widened together to one ring_width (or the group's widest mapped
+    width, if wider). Pure."""
     if feats.attrs.get("osm_junction") is None:
         return specs
     out = list(specs)
     rules = feats.rules
-    for i, sp in enumerate(out):
-        if sp is None or sp.kind not in BUILT or not is_ring(feats, i):
-            continue
-        width = _rule_value(rules.get("width"), i)
-        mapped = float(width) if width is not None and 1.0 <= float(width) <= 40.0 else None
-        if mapped is None:
-            mapped = _osm(feats, "width", i, *OSM_WIDTH_M)
-        out[i] = sp._replace(width=max(mapped or 0.0, ring_width(sp.lanes)), urban=False, median=None)
+    rings = [i for i, sp in enumerate(out) if sp is not None and sp.kind in BUILT and is_ring(feats, i)]
+    for group in _ring_groups(feats, rings):
+        lanes = max((out[i].lanes or 1 for i in group), default=1)
+        mapped = 0.0
+        for i in group:
+            width = _rule_value(rules.get("width"), i)
+            one = float(width) if width is not None and 1.0 <= float(width) <= 40.0 else None
+            if one is None:
+                one = _osm(feats, "width", i, *OSM_WIDTH_M)
+            if one is not None:
+                mapped = max(mapped, float(one))
+        width = max(mapped, ring_width(lanes))
+        for i in group:
+            out[i] = out[i]._replace(width=width, urban=False, median=None)
     return out
 
 
@@ -4418,9 +4468,10 @@ TUNNEL_STEP = 4.0       # m between tunnel profile points
 TUNNEL_WET_SHARE = 0.25 # a tunnel part with more of its points under water is left out (TunnelProfiles.wet)
 TUNNEL_WET_COVER_M = 60.0   # m: water this far over the chain's lower portal is no underwater tunnel's (_mark_drowned)
 TUNNEL_WET_RUN_M = 20.0 # ... and a tunnel chain passing under water this far away from its ends (_mark_drowned)
-TUNNEL_WET_MIN_LEN_M = 1200.0   # m: an underwater chain shorter than this is a city river crossing (Rotherhithe,
+TUNNEL_WET_MIN_LEN_M = 1700.0   # m: an underwater chain shorter than this is a city river crossing (Rotherhithe,
                                 # 1.48 km) and is built as a tube; longer ones stay excluded (a car in a long
-                                # submerged tube floats: the Burnley 3.2 km)
+                                # submerged tube floats: the Burnley 3.2 km). 1200 drowned Rotherhithe itself (its
+                                # Overture chain is longer than the 1.2 km the old threshold allowed, 2026-11-06).
 TUNNEL_WET_DEPTH_M = 10.0   # m under the water-covered ground a short river tunnel's floor is laid, clear of the bed
 TUNNEL_WET_EASE_M = 120.0   # m over which that depth is eased in from its portals
 TUNNEL_OPEN_COVER = 4.0 # m: a 'tunnel' whose ground nowhere rises this far over the straight line between its portals
@@ -4655,6 +4706,22 @@ NO_WALK_KMH = 80.0              # a one-way carriageway this fast has no sidewal
                                 # roads past houses read as town, and got a raised sidewalk for a median: 2026-11-02)
 ARTERIAL_KMH = 73.0             # a divided urban trunk this slow (45 mph) is a town arterial, not an expressway ...
 ARTERIAL_GAP_M = 150.0          # ... or, with no limit, one with a junction this often (Coastal Highway ~50 m)
+# In the UK and Ireland a built-up street has a footway on both sides even where OpenStreetMap does not tag one: the
+# US's residential rule (a grass verge or front gardens, no invented sidewalk) left most London residential streets
+# with a bare carriageway edge. Only roads whose sidewalk tag / walled measurement says otherwise are left alone.
+FOOTWAY_DEFAULT_COUNTRIES = {"GB", "IE", "IM", "JE", "GG"}
+FOOTWAY_DEFAULT_CLASSES = {"residential", "unclassified", "living_street"}
+
+
+def footway_default(spec, country):
+    """spec with both footways where a UK/Irish built-up minor street has no mapped sidewalk; else spec."""
+    if spec is None or getattr(spec, "sides", None) is not None or spec.kind not in BUILT:
+        return spec
+    if str(country or "").upper() not in FOOTWAY_DEFAULT_COUNTRIES or not spec.urban:
+        return spec
+    if spec.cls in FOOTWAY_DEFAULT_CLASSES:
+        return spec._replace(sides=(1, -1))
+    return spec
 
 
 def has_sidewalks(spec):
@@ -4893,6 +4960,15 @@ def extras(spec, pts, lon, left_hand=False, country=None, osm=None, ws=None, shi
             for side in (1, -1):
                 for k in range(1, n):
                     mark("lane", "line_white", lw_, offset_polyline(pts, side * k * lw * scale), pat)
+    if kind in BUILT and str(country or "").upper() in KERB_YELLOW_COUNTRIES \
+            and has_sidewalks(spec) and spec.urban and spec.cls in KERB_YELLOW_CLASSES:
+        # two yellow lines along each kerb: the parking restriction a London street almost always has, where
+        # OpenStreetMap's parking tags are not in the road tags we read (osmtags.py). Cut at corners like an edge line.
+        for side in walk_sides(spec, left_hand):
+            for k in (0, 1):
+                mark("edge", "line_yellow", KERB_YELLOW_W,
+                     offset_polyline(pts, side * (wv / 2 - KERB_YELLOW_INSET
+                                                  - k * (KERB_YELLOW_W + KERB_YELLOW_GAP))), side=side)
     if kind == "paved" and not has_sidewalks(spec):          # no curb: the asphalt's edge
         dw = EDGE_DECAL["w"]
         for side in (1, -1):
@@ -8820,7 +8896,7 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
                 bseen[str(feats.ids[i])] = (feats, i, bspecs[i])
             if specs[i] is None or str(feats.ids[i]) in seen:
                 continue
-            seen[str(feats.ids[i])] = (feats, i, specs[i])
+            seen[str(feats.ids[i])] = (feats, i, footway_default(specs[i], country))
     rings = []                                  # (fid, spec, lon/lat ring) near the tile (xy at h = 0)
     for fid in sorted(seen):
         feats, i, spec = seen[fid]
@@ -8917,7 +8993,8 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
     deck_walk = {}                              # the bridges that carry sidewalks (deck_walks)
     for fid in bseen:
         bf, bi, _ = bseen[fid]
-        dwk = deck_walks(bf, bi, road_specs(bf, urban_fn, widths, left_hand), left_hand)
+        dspecs = [footway_default(sp, country) for sp in road_specs(bf, urban_fn, widths, left_hand)]
+        dwk = deck_walks(bf, bi, dspecs, left_hand)
         if dwk:
             deck_walk[fid] = dwk
     deck_shift = deck_shift_fn(frame, cells, urban_fn, widths, left_hand)   # (a deck at a merge / split)
@@ -8929,7 +9006,7 @@ def build_tile(frame, tx, ty, cells, elev, urban_fn=None, walks=None, bridges=No
         for bf in source_cells:
             if bf is None or len(bf) == 0:
                 continue
-            specs = road_specs(bf, urban_fn, widths, left_hand)
+            specs = [footway_default(sp, country) for sp in road_specs(bf, urban_fn, widths, left_hand)]
             for bi, bs in enumerate(bridge_specs(bf)):
                 fid = str(bf.ids[bi])
                 if bs is not None and fid not in expanded_walk:

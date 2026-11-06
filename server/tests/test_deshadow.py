@@ -684,8 +684,8 @@ def golden(**kw):
 class FlagOffTest(unittest.TestCase):
     # sha256 of these renders by the imagery code without the de-shadow hook: the finished pyramid's (geotiles phase 3a,
     # 2026-10-29: the tone curve per source tile, kept as JPEGs; before it, commit 6465d26's a280901f / b9ef73bd)
-    GOLDEN = {1.0: "f0b36dae73d66c9d15d056a6bfbf4b37aee3e0af42ccc53e1de4bdd208790b3c",
-              0.0: "a8c2eedb16fa69f148c11b613099c8d7501e60a2a9cbef2fa1cc48f420a01e47"}
+    GOLDEN = {1.0: "27c4fc8ed8846f0741263867f466c7acb47f7fc026cbfd09d399ec79c0ee56a0",
+              0.0: "e79cc566a574298a3f785dd50fe0f01283f6918aad8e55311203d72711e625c5"}
 
     def test_render_byte_identical_without_deshadow(self):
         for tone, digest in self.GOLDEN.items():

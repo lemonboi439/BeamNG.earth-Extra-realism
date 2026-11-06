@@ -264,6 +264,18 @@ class RailwayTest(unittest.TestCase):
         ramp = np.diff(deep) / np.diff(xy[:, 0])
         self.assertLessEqual(float(np.abs(ramp).max()), 0.02, "at a main line's grade")
 
+    def test_a_resampled_tunnel_hull_takes_the_wet_fade(self):
+        """roads.tunnel_sections returns the lower hull, often fewer samples than the line: a wet tunnel under
+        London's docks read 3001 samples and a 700-sample hull (Roupell Street, 2026-11-06)."""
+        xy = np.c_[np.linspace(0.0, 3000.0, 3001), np.zeros(3001)]
+        seabed = np.full(len(xy), -20.0)
+        with mock.patch.object(roads, "tunnel_sections",
+                               return_value=(np.full(700, -20.0), np.ones(700, np.int64))):
+            z = railways._tunnel_floor(xy, seabed, np.ones(len(xy), bool))
+        self.assertEqual(len(z), 700)
+        self.assertTrue(np.isfinite(z).all())
+        self.assertLess(float(z[350]), -20.0)
+
     def test_osm_tunnel_tag_makes_a_tunnel_without_an_overture_flag(self):
         """The rail shard's tunnel=yes (the Channel Tunnel, the Overground dives) where Overture has no range."""
         f = features([[(0.0, 100.0), (300.0, 100.0)]], ["standard_gauge"], subtypes=["rail"])

@@ -231,6 +231,41 @@ class ResidentialAccuracyTest(unittest.TestCase):
         self.assertTrue(roads.has_sidewalks(s), "a walled street keeps its measured sidewalk")
 
 
+class UKFootwayAndLinesTest(unittest.TestCase):
+    """UK/Irish built-up minor streets have footways and kerbside double yellows even without an OSM sidewalk tag."""
+
+    def spec(self, **kw):
+        base = dict(width=6.0, kind="paved", urban=True, cls="residential", sides=None, walk=2.0)
+        base.update(kw)
+        return roads.Spec(**base)
+
+    def test_uk_footway_default(self):
+        sp = self.spec()
+        self.assertFalse(roads.has_sidewalks(sp))
+        gb = roads.footway_default(sp, "GB")
+        self.assertEqual(gb.sides, (1, -1))
+        self.assertTrue(roads.has_sidewalks(gb))
+        self.assertIs(roads.footway_default(sp, "US"), sp)
+        self.assertEqual(roads.footway_default(sp._replace(sides=()), "GB").sides, (),
+                         "a mapped no-sidewalk / front-garden street keeps it")
+
+    def test_double_yellows_along_both_kerbs(self):
+        sp = self.spec(sides=(1, -1))
+        pts = np.c_[np.linspace(0.0, 50.0, 11), np.zeros(11), np.full(11, 10.0)]
+        ex = roads.extras(sp, pts, -0.1, True, "GB")
+        yellow = [e for e in ex if e[0].get("m") == "line_yellow" and e[0].get("kind") == "edge"]
+        self.assertEqual(len(yellow), 4)
+        self.assertTrue(all(abs(e[1] - roads.KERB_YELLOW_W) < 1e-9 for e in yellow))
+        self.assertEqual({e[0].get("side") for e in yellow}, {1, -1})
+        offsets = sorted(round(abs(float(e[2][0, 1])), 3) for e in yellow)
+        self.assertAlmostEqual(offsets[0], 2.45, places=2)
+        self.assertAlmostEqual(offsets[1], 2.45, places=2)
+        self.assertAlmostEqual(offsets[2], 2.65, places=2)
+        self.assertAlmostEqual(offsets[3], 2.65, places=2)
+        self.assertFalse([e for e in roads.extras(sp, pts, -0.1, True, "US")
+                          if e[0].get("m") == "line_yellow" and e[0].get("kind") == "edge"])
+
+
 class RingTest(unittest.TestCase):
     """A mapped roundabout is its ring width (one lane 5.5 m), not a class-wide road, and keeps its edge line."""
 
@@ -518,6 +553,14 @@ class BuildTileTest(unittest.TestCase):
         two = roads.Spec(4.5, "paved", False, "tertiary", False, lanes=2)
         self.assertEqual(lane(two, {"lanes": "2"}), [], "too narrow for a centre line, as without the tag")
         self.assertTrue(lane(two._replace(width=6.2), {"lanes": "2"}))
+
+    def test_uk_residential_gets_footways_and_kerb_yellows(self):
+        f = features([[(-100, 50), (100, 50)]], ["residential"])
+        walks = []
+        chunks = roads.build_tile(FRAME, 0, 0, [f], flat, lambda la, lo: np.ones(np.shape(la), bool),
+                                  walks=walks, country="GB")
+        self.assertTrue(walks, "an untagged UK residential street gets its footways")
+        self.assertIn("line_yellow", {c["m"] for c in chunks}, "and the kerbside double yellows")
 
     def test_city_street_sidewalks_and_lines_stop_at_crossings(self):
         f = features([[(-300, 100), (300, 100)], [(120, -100), (120, 300)]], ["secondary", "residential"])
@@ -1520,7 +1563,8 @@ class NearNodePairsTest(unittest.TestCase):
 class RingWidthTest(unittest.TestCase):
     def test_a_mapped_roundabout_is_as_wide_as_the_guides_make_it(self):
         ring = [(30 * np.cos(a), 30 * np.sin(a)) for a in np.linspace(0, 2 * np.pi, 25)]
-        f = features([ring, ring, [(-100, 80), (100, 80)]], ["residential", "tertiary", "residential"])
+        ring2 = [(300 + 20 * np.cos(a), 20 * np.sin(a)) for a in np.linspace(0, 2 * np.pi, 20)]
+        f = features([ring, ring2, [(-100, 80), (100, 80)]], ["residential", "tertiary", "residential"])
         f.attrs["osm_junction"] = np.array(["roundabout", "roundabout", ""], object)
         f.attrs["osm_lanes"] = np.array([np.nan, 2.0, np.nan])
         sp = roads.road_specs(f, lambda la, lo: np.ones(np.shape(la), bool))
@@ -1529,6 +1573,17 @@ class RingWidthTest(unittest.TestCase):
         self.assertFalse(sp[0].urban)                   # no parking lanes on the ring
         self.assertFalse(roads.has_sidewalks(sp[0]))
         self.assertTrue(sp[2].urban)                    # a street beside it as before
+
+    def test_one_roundabout_s_segments_take_one_width(self):
+        """Rotherhithe's Overture ring is eight segments, its lanes 1-3: each widened by itself, the ring bulged."""
+        ring = [(30 * np.cos(a), 30 * np.sin(a)) for a in np.linspace(0, 2 * np.pi, 25)]
+        a, b = ring[:14], ring[13:]                     # two segments sharing an end point
+        f = features([a, b], ["primary", "primary"])
+        f.attrs["osm_junction"] = np.array(["roundabout", "roundabout"], object)
+        f.attrs["osm_lanes"] = np.array([1.0, 3.0])
+        sp = roads.road_specs(f, lambda la, lo: np.ones(np.shape(la), bool))
+        self.assertAlmostEqual(sp[0].width, roads.ring_width(3))
+        self.assertAlmostEqual(sp[1].width, roads.ring_width(3))
 
 
 class NamelessCarriagewaysTest(unittest.TestCase):

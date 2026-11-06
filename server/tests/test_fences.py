@@ -19,7 +19,7 @@ class KindTest(unittest.TestCase):
             attrs["tags"] = np.array([json.dumps(tags)])
         return type("F", (), {"attrs": attrs})()
 
-    def test_chain_link_and_noise_wall_only(self):
+    def test_chain_link_noise_and_garden_walls(self):
         self.assertEqual(fences.kind_of(self.features("fence", {"fence_type": "chain_link"}), 0), "chainlink")
         self.assertEqual(fences.kind_of(self.features("fence", {"barrier": "fence", "fence_type": "chainlink"}), 0),
                          "chainlink")
@@ -27,9 +27,13 @@ class KindTest(unittest.TestCase):
         self.assertIsNone(fences.kind_of(self.features("fence"), 0))
         self.assertEqual(fences.kind_of(self.features("wall", {"wall": "noise_barrier"}), 0), "noisewall")
         self.assertEqual(fences.kind_of(self.features("noise_barrier"), 0), "noisewall")
-        self.assertIsNone(fences.kind_of(self.features("wall", {"wall": "brick"}), 0))
+        self.assertEqual(fences.kind_of(self.features("wall", {"wall": "brick"}), 0), "gardenwall")
+        self.assertEqual(fences.kind_of(self.features("wall"), 0), "gardenwall")
+        for skip in ("city_wall", "retaining_wall", "castle_wall"):
+            self.assertIsNone(fences.kind_of(self.features("wall", {"wall": skip}), 0))
         self.assertIsNone(fences.kind_of(self.features("barrier", {"tags": "nope"}), 0))
-        self.assertIsNone(fences.kind_of(self.features("wall", {"tags": "null"}), 0))
+        self.assertIsNone(fences.kind_of(self.features("barrier", {"tags": "null"}), 0))
+        self.assertEqual(fences.point_kind(self.features("waste_basket"), 0), "bin")
 
 
 class PlaceTest(unittest.TestCase):
@@ -45,6 +49,15 @@ class PlaceTest(unittest.TestCase):
             coord_off=np.array([0, len(xy)], np.int64), lonlat=np.column_stack((lon, lat)),
             attrs={"subtype": np.array(["barrier"]), "class": np.array([cls]),
                    "tags": np.array([json.dumps(tags)])})
+
+    def point(self, cls, xy, fid="point-1", tags=None):
+        lat, lon, _ = self.frame.enu_to_geodetic(np.array([xy[0]]), np.array([xy[1]]), np.zeros(1))
+        return mapgeom.Features(
+            layer="infrastructure", ids=np.array([fid]), kind=np.array([mapgeom.POINT], np.uint8),
+            part_off=np.array([0, 1], np.int64), ring_off=np.array([0, 1], np.int64),
+            coord_off=np.array([0, 1], np.int64), lonlat=np.column_stack((lon, lat)),
+            attrs={"subtype": np.array(["barrier"]), "class": np.array([cls]),
+                   "tags": np.array([json.dumps(tags or {})])})
 
     def rows(self, feats, box=(0.0, 0.0, 100.0, 100.0)):
         return fences.rows(self.frame, lambda key: feats, box, lambda la, lo: np.full(np.shape(la), 5.0))
@@ -69,6 +82,28 @@ class PlaceTest(unittest.TestCase):
         xs = np.sort([r[1] for r in got])
         self.assertAlmostEqual(float(np.median(np.diff(xs))), fences.WALL_LEN, delta=0.05)
         self.assertTrue(all(abs(r[4] - 270.0) < 0.5 for r in got))
+
+    def test_garden_wall_panels_follow_the_line(self):
+        got = self.rows(self.line("wall", {"wall": "brick"}, [[10.0, 40.0], [90.0, 40.0]]))
+        self.assertGreaterEqual(len(got), 38)
+        self.assertLessEqual(len(got), 42)
+        self.assertTrue(all(r[0] == "gardenwall" and r[6] == fences.GARDEN_H for r in got))
+        self.assertTrue(all(abs(r[2] - 40.0) < 0.05 and abs(r[3] - 5.0) < 0.02 for r in got))
+        xs = np.sort([r[1] for r in got])
+        self.assertAlmostEqual(float(np.median(np.diff(xs))), fences.GARDEN_LEN, delta=0.05)
+
+    def test_a_mapped_wall_height_scales_the_panel(self):
+        got = self.rows(self.line("wall", {"wall": "brick", "height": "1.6 m"}, [[10.0, 40.0], [30.0, 40.0]]))
+        self.assertTrue(got)
+        self.assertTrue(all(r[6] == 1.6 for r in got))
+
+    def test_a_mapped_waste_basket_is_a_bin(self):
+        got = self.rows(self.point("waste_basket", (50.0, 20.0)))
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0][0], "bin")
+        self.assertAlmostEqual(got[0][1], 50.0, delta=0.01)
+        self.assertAlmostEqual(got[0][2], 20.0, delta=0.01)
+        self.assertEqual(got[0][6], fences.BIN_H)
 
     def test_a_panel_past_the_tile_is_left_out(self):
         feats = self.line("fence", {"fence_type": "chain_link"}, [[-30.0, 10.0], [40.0, 10.0]])

@@ -66,11 +66,16 @@ class ServeTransport:
         return status, {}, body
 
 
+# The chain these tests' fake transports know. It leaves out eox2025 so their source colours and
+# request counts stay the ones they assert; the real DEFAULT_CHAIN's order is checked separately.
+TEST_CHAIN = ("md6in", "naipusda", "naip", "usgs", "eox2023", "eox2016")
+
+
 class FakeNet(imagery.Imagery):
     """Imagery whose network is a function source_name -> (z, x, y) -> (status, body), behind a
     netfetch.Fetcher (host policies without rate limits unless `policies` is given)."""
 
-    def __init__(self, cache_dir, serve, chain=imagery.BASE_CHAIN, policies=None, clock=None, **kw):
+    def __init__(self, cache_dir, serve, chain=TEST_CHAIN, policies=None, clock=None, **kw):
         self.requests = []
         self.transport = ServeTransport(serve, self.requests)
         net = netfetch.Fetcher(transport=self.transport, sleep=lambda s: None, policies=policies or FAST,
@@ -485,7 +490,8 @@ class ChainTest(unittest.TestCase):
 
     def test_parse_chain_and_attribution(self):
         self.assertIsNone(imagery.parse_chain("off"))
-        self.assertEqual(imagery.parse_chain("usgs,eox2016"), ("usgs", "eox2016"))
+        self.assertEqual(imagery.parse_chain("usgs,eox2025,eox2016"), ("usgs", "eox2025", "eox2016"))
+        self.assertLess(imagery.DEFAULT_CHAIN.index("eox2025"), imagery.DEFAULT_CHAIN.index("eox2023"))
         with self.assertRaises(ValueError):
             imagery.parse_chain("google")
         self.assertEqual(imagery.Imagery(self.tmp.name).attribution(), imagery.ATTRIBUTION)
@@ -493,6 +499,7 @@ class ChainTest(unittest.TestCase):
         self.assertIn("CC BY 4.0", imagery.Imagery(self.tmp.name, ("eox2016",)).attribution())
         # EOX's required wording (June 2026, docs/research/2026-10-10-rate-limits.md)
         eox = "EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified Copernicus Sentinel data "
+        self.assertEqual(imagery.SOURCES["eox2025"].attribution, eox + "2025), CC BY-NC-SA 4.0")
         self.assertEqual(imagery.SOURCES["eox2023"].attribution, eox + "2023), CC BY-NC-SA 4.0")
         self.assertEqual(imagery.SOURCES["eox2016"].attribution, eox + "2016 & 2017), CC BY 4.0")
         self.assertEqual(imagery.Imagery(self.tmp.name, imagery.BASE_CHAIN).attribution(),
@@ -500,7 +507,8 @@ class ChainTest(unittest.TestCase):
                          "USDA NAIP (public domain); "
                          "USDA NAIP via USGS The National Map (public domain); "
                          "USGS The National Map (public domain); " + eox
-                         + "2023), CC BY-NC-SA 4.0; " + eox + "2016 & 2017), CC BY 4.0")
+                         + "2025), CC BY-NC-SA 4.0; " + eox + "2023), CC BY-NC-SA 4.0; "
+                         + eox + "2016 & 2017), CC BY 4.0")
         self.assertNotIn("Sentinel-2 cloudless", imagery.ATTRIBUTION)
         for n in imagery.DEFAULT_CHAIN:                     # the overlay's font is ASCII only
             imagery.SOURCES[n].attribution.encode("ascii")
@@ -908,7 +916,7 @@ class NetworkImageryTest(unittest.TestCase):
 
     def test_outside_us_falls_back_to_eox(self):
         rgb, used = self.render(48.0, 70.0)             # Kazakhstan: no regional source either
-        self.assertEqual(set(used), {"eox2023"})
+        self.assertEqual(set(used), {"eox2025"})        # the newest global fallback
         self.assertGreater(rgb.std(), 5)
 
     def test_open_ocean(self):

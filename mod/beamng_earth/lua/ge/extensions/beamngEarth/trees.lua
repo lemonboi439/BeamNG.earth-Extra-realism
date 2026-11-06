@@ -258,8 +258,11 @@ end
 -- its x, the origin at the forward end) and its concrete noise blocker (4 m along its y).
 M.CATALOG.chainlink = { { '/art/shapes/objects/s_chainlink_old', 1.76 } }
 M.CATALOG.noisewall = { { WCA .. 'objects/s_concrete_noiseblocker', 2.4 } }
+-- the mapped garden walls' own brick panel (tools/build_garden_wall.py; bne_garden_brick / bne_garden_stone)
+M.CATALOG.gardenwall = { { '/levels/beamng_earth/art/shapes/beamngEarth/bne_garden_wall', 0.9 } }
 M.GROUP_MAX_M.chainlink = 800
 M.GROUP_MAX_M.noisewall = 2000
+M.GROUP_MAX_M.gardenwall = 700
 -- Picnic tables and grills in parks (server picnic.py): Utah's table (2 x 1.4 m, 0.85 m high) and East
 -- Coast's grill. The table's materials live with Utah's buildings.
 M.CATALOG.picnictable = { { UT .. 'buildings/ut_picnic_table_a', 0.85 } }
@@ -511,6 +514,10 @@ local function setup()
   for _, m in ipairs(MATERIALS) do
     local p = m .. '/main.materials.json'
     if not FS or FS:fileExists(p) then pcall(loadJsonMaterialsFile, p) end
+  end
+  -- the mapped garden walls' own brick and stone (bne_garden_wall.dae, tools/build_garden_wall.py)
+  if loadJsonMaterialsFile then
+    pcall(loadJsonMaterialsFile, '/levels/beamng_earth/art/shapes/beamngEarth/garden.materials.json')
   end
   if FS and readFile and writeFile then
     local ok, made = pcall(staticSignal)

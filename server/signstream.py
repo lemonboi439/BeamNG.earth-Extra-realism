@@ -16,6 +16,7 @@ import numpy as np
 
 import highwaysigns
 import mergesigns
+import namesigns
 import roadmesh
 import roads
 import signstates
@@ -23,7 +24,7 @@ import speedsigns
 import staging
 
 log = logging.getLogger('earthd.signs')
-KINDS = ('exits', 'mileposts', 'merges', 'speeds')
+KINDS = ('exits', 'mileposts', 'merges', 'speeds', 'names')
 WORKERS = 1                     # sign tiles in flight per connection (Tracker): a road tile waits behind one at most
 WORLD = os.environ.get("BNE_SIGNS_WORLD") == "1"
 
@@ -72,11 +73,12 @@ def build_tile(md, frame, aid, tx, ty, elev, out_dir, vfs_dir, urban=None, width
                 pts = np.column_stack(frame.geodetic_to_enu(ring[:, 1], ring[:, 0], 0.))
                 decks.append({'deck': True, 'n': pts, 'w': spec.width})
     speeds = _speeds(frame, tx, ty, elev, context, decks, left_hand, mph, speedsigns.style(country, us))
+    names = _names(frame, tx, ty, elev, context, left_hand, country)
     if not (WORLD or us):
-        return write_tile(out_dir, vfs_dir, aid, tx, ty, (None, None, None, speeds))     # (not the US: no guide signs)
+        return write_tile(out_dir, vfs_dir, aid, tx, ty, (None, None, None, speeds, names))  # (not the US: no guide signs)
     exits, miles = highwaysigns.build_tile(md, frame, tx, ty, elev, decks, left_hand, mph, urban, widths)
     merges = mergesigns.build_tile(frame, tx, ty, [feats], elev, decks, urban, widths, left_hand, context)
-    return write_tile(out_dir, vfs_dir, aid, tx, ty, (exits, miles, merges, speeds))
+    return write_tile(out_dir, vfs_dir, aid, tx, ty, (exits, miles, merges, speeds, names))
 
 
 _warned = -float('inf')
@@ -92,6 +94,19 @@ def _speeds(frame, tx, ty, elev, context, decks, left_hand, mph, face):
         if now - _warned >= 60.:
             _warned = now
             log.warning('Speed-limit signs unavailable; roads continue: %s: %s', type(error).__name__, error)
+        return None
+
+
+def _names(frame, tx, ty, elev, context, left_hand, country):
+    """namesigns.build_tile, or None: the UK/Irish nameplates are optional scenery too."""
+    global _warned
+    try:
+        return namesigns.build_tile(frame, tx, ty, elev, context, left_hand, country)
+    except Exception as error:
+        now = time.monotonic()
+        if now - _warned >= 60.:
+            _warned = now
+            log.warning('Street-name signs unavailable; roads continue: %s: %s', type(error).__name__, error)
         return None
 
 

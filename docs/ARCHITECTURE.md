@@ -691,7 +691,7 @@ over to AWS, a 400 wrote a permanent `.404` marker, and the User-Agent lived in 
   failed probe up to 15 min), daily soft/hard budgets in `<cache>/netstats/<UTC date>.json`, one
   summary log line a minute. Injectable clock, sleep, rng, transport and wall clock (tests).
 - **Failover**: `HostUnavailable` / `RateLimited` cost no network and the chains move on: imagery
-  usgs → eox2023 → eox2016 (one host, one breaker: both skipped together) → palette; DEM Mapterhorn →
+  usgs → eox2025 → eox2023 → eox2016 (one host, one breaker: all skipped together) → palette; DEM Mapterhorn →
   AWS for the same key (also on Mapterhorn errors now) → `DemUnavailable` (where a coarse offline DEM
   will go). A prefetch future the limiter dropped is re-fetched as demand by the render that needs it
   (one fetch for every render waiting on it); prefetch skips a source whose circuit is open, so it
@@ -987,7 +987,8 @@ three days of testing: dem 741 MB / 7.5k files, imagery 1.4 GB / 35k, deshadow 7
   sends `roads_reset` after the Roads setting is switched back on.
 - Highway signs (`server/signstream.py`, from cody196's PR #363): for each road tile the mod has, the same road
   processes build a sign tile (exit and overhead panels, merge warnings, Interstate mile markers; render-only
-  shapes `exits` / `mileposts` / `merges`), announced as `roads_tile` with key `s<tx>_<ty>` (one in flight a
+  shapes `exits` / `mileposts` / `merges`, plus the UK/Irish `names` plates and `speeds`), announced as
+  `roads_tile` with key `s<tx>_<ty>` (one in flight a
   connection; an empty one is not sent unless it replaces signs). The sources come from the weekly sign shards
   (`tools/build_sign_tags.py` -> BeamNG.Earth-data Pages `signs/`, read by `railtags.SignTags`; `BNE_SIGNS_DIR`: a
   local shard folder), placed on the roads' own pavement rows (`signroads.Context`, per map cell); only where a US
@@ -1013,6 +1014,11 @@ three days of testing: dem 741 MB / 7.5k files, imagery 1.4 GB / 35k, deshadow 7
   road meets a tertiary-or-better one), 300 m past motorway entrances, and reminders where a road crosses a fixed
   lat/lon grid (about 1 mile in town, 2 out of it); thinned per value and direction, placed beside the carriageway
   clear of every pavement, off bridges and tunnels. Faces: MUTCD R2-1 in the US, Rb-1 in Canada, Vienna C14
+- Street-name plates (`server/namesigns.py`, shape `names` in the same sign tiles): in the UK and Ireland, one
+  black plate with white lettering per street name and tile, on the left footway at the middle of the name's
+  longest piece, facing the carriageway (the London nameplate). Names come from the roads layer's `name`
+  (OpenStreetMap, joined by `osmtags.py`); motorways, trunks, service roads and links get none. Render-only,
+  built with the guide signs' glyph atlas and exit materials, so it shares `highway_signs`' off switch.
   elsewhere. (They replaced the furniture props of 2026-10-14, 30 m past both ends of every long segment.)
 - Build: class and rules give the width (STYLE, or the width rule) and the surface kind (paved /
   gravel / dirt). Footways, paths and steps are left out, and so are segments flagged as bridge or

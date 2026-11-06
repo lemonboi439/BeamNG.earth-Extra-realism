@@ -55,6 +55,14 @@ class RegionStyleTest(unittest.TestCase):
         self.assertEqual(bld.region_style(37.36, -118.39).name, "us_west")
         self.assertEqual(bld.region_style(46.59, 7.91).name, "alpine")
         self.assertEqual(bld.region_style(52.37, 4.90).name, "europe_north")
+        self.assertEqual(bld.region_style(51.5074, -0.1278).name, "british")     # London
+        self.assertEqual(bld.region_style(53.35, -6.26).name, "british")         # Dublin
+        self.assertEqual(bld.region_style(48.86, 2.35).name, "europe_north")     # Paris
+        london = bld.plan(np.array([[0, 0], [8, 0], [8, 15], [0, 15]], float), {"class": "residential"},
+                          1, 51.5074, -0.1278)
+        self.assertIn(london.floors, (2, 3), "a London terrace, not a four-storey office")
+        self.assertLessEqual(london.floors, 3)
+        self.assertLessEqual(london.floor_h, 3.2, "a lower British storey")
         self.assertEqual(bld.region_style(40.42, -3.70).name, "mediterranean")
         self.assertEqual(bld.region_style(19.43, -99.13).name, "latin_america")
         self.assertEqual(bld.region_style(35.66, 139.70).name, "east_asia")

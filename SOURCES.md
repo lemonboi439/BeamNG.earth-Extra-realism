@@ -55,7 +55,7 @@ national photos, then worldwide satellite photos. If one does not answer, the ne
 | USGS / USDA NAIP aerial photos | `imagery.nationalmap.gov` | the lower 48 US states, 30-60 cm per pixel, near you | Coarser photos meanwhile. | named |
 | USDA NAIP aerial photos (second source) | `apps.geo.fpac.usda.gov` | the same photos, from the US Department of Agriculture | Coarser photos meanwhile. | named |
 | USGS The National Map photos | `basemap.nationalmap.gov` | the US, the middle distance and the distant land | Sentinel-2 satellite photos meanwhile. | named |
-| Sentinel-2 cloudless (EOX) | `tiles.maps.eox.at` | the whole world, 10 m per pixel; the distant land everywhere and the near ground outside the regions above. Also the world map's base layers. | New ground outside the regions above may stay plain (the land cover's colours). | named |
+| Sentinel-2 cloudless 2025 / 2023 / 2016 (EOX) | `tiles.maps.eox.at` | the whole world, 10 m per pixel; the distant land everywhere and the near ground outside the regions above (the UK included: its national orthophotos are commercial). Also the world map's base layers. | New ground outside the regions above may stay plain (the land cover's colours). | named |
 
 Regional services, each used only inside its own area:
 Connecticut (`cteco.uconn.edu`), Massachusetts (`tiles.arcgis.com`), Washington DC (`imagery.dcgis.dc.gov`),

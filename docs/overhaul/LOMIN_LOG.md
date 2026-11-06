@@ -299,3 +299,104 @@ must fit), and London as realistic as possible while optimising for realistic tr
   projects folder now holds this repo and the clean 3.12 build venv.
 - Still open/not ported: #740 miter clamp at hairpin vertices (native ribbon kernel; needs a bevel),
   #638 tunnel layering, #628 road continuity, #625 building clearance, and the large feature PRs.
+
+
+## 2026-11-06 — UK/EU/US data-source audit, Sentinel-2 2025, source report
+
+The user asked for the highest-quality legally open elevation, imagery and vector/rail data for the UK,
+Western Europe and the US, with bounding-box routing, vertical-datum normalization, caching, credits,
+toggles, fallbacks, and no paid/scraped sources.
+
+- **Audit first, not a second provider stack.** The requested `server/elevation/providers.py`,
+  `imagery_sources.json` and `osm_importer.py` do not exist here; the real chain is `server/dem.py`
+  (Mapterhorn -> AWS; opt-in HRDEM/LidarBC), `server/imagery.py` + `server/imagery_regional.py`, and
+  Overture/OSM in `mapdata.py` / `railtags.py`. `docs/overhaul/DATA_SOURCES.md` now maps every source,
+  licence, resolution, toggle and fallback.
+- **UK/US elevation was already integrated.** Mapterhorn's file list has z17 over London (the z17
+  tiles themselves 404, so z16 is the effective depth: 0.74 m pixels) and z16 over New York, Chicago,
+  Denver, Seattle, Miami, Atlanta and Phoenix, Manchester, Birmingham, Leeds, Cornwall, Edinburgh,
+  Glasgow and Dublin: those z15+ tiles are the national lidars. Measured a London z16 tile against the
+  EA LIDAR Composite DTM 1 m on 2026-11-06: median +0.02 m, height correlation 0.98; EA has ~10 cm
+  more 1 m roughness, below the scale the grading and the 1 m lattice keep. The EA WCS (0.65 s a tile)
+  and USGS 3DEP export (10 s a tile, EPSG:3857 truncated) were therefore **not** put on the critical
+  path; they duplicate data already in Mapterhorn. The opt-in HRDEM/LidarBC readers stay for Canada,
+  with the 60 m seam feather as the datum normalization.
+- **New imagery: EOX Sentinel-2 cloudless 2025** (`eox2025`) is now the first global fallback, ahead of
+  2023 and 2016. Verified in the WMTS capabilities and a live z14 tile (200 image/jpeg, ~0.2 s). This is
+  the newest legally open (CC BY-NC-SA 4.0) result for the UK, where the national 25-50 cm orthophotos
+  are commercial and the EA's aerial photography is index metadata, not an open tile service.
+- **No invented providers.** US state orthos, French/Spanish/Dutch/German/Italian/Polish/Czech/Estonian/
+  Flanders/Swiss/Austrian services were already in the chain; UK high-res ortho and OS Open Buildings
+  (API-keyed) are documented as legal gaps, not code gaps. No Google/Bing/Esri/Mapbox/MapTiler and no
+  scraping were added.
+- **New `tools/data_sources.py`**: prints the active elevation/imagery/vector-rail chain and credits at a
+  coordinate, with `--check` live probes and `--json` for scripts. London and NYC reports verified.
+- Credits updated (`CREDITS.md`, `SOURCES.md`, `server/README.md`, `credits.py`, the mod's fallback
+  attribution); imagery goldens regenerated for the new chain (test_colormatch / test_deshadow).
+  Green: test_imagery (43), test_colormatch (37), test_deshadow (28), test_credits (27), test_areas
+  (18), test_cli_default / test_v131_default (4). `tools/data_sources.py` verified live for London
+  and New York (Mapterhorn z16 in both, EOX 2025 200, USGS 200, NJ ortho 200).
+
+
+## 2026-11-06 — London street detail: footways, double yellows, nameplates, mapped walls and bins
+
+The user asked for sidewalk bumps and walls, double yellow lines, street lines and street signs, and trash cans.
+
+- **Footways on UK/Irish built-up minor streets.** `roads.footway_default` gives residential / unclassified /
+  living-street roads both footways where OpenStreetMap has no sidewalk tag (a mapped `sidewalk=no` or a
+  front-garden measurement still wins). The old rule was US-oriented: no tag meant no invented sidewalk, and
+  most London residential streets have no tag, so they had bare carriageway edges. `build_tile` uses the
+  default for its sidewalks, furniture and the bridge-deck walks.
+- **Kerbside double yellows.** `roads.extras` paints two 100 mm yellow lines, 100 mm apart, 0.35 m from each
+  kerb on UK/Irish paved and cobbled town streets with footways (TSRGD 1017); they are edge-kind lines, so
+  the existing corner cuts stop them at junctions. This is the London parking restriction OSM's parking tags
+  would carry, but Layercake's highways file has no parking columns.
+- **Street-name plates.** New `server/namesigns.py`, packaged as `names` in the sign tiles (signstream.py,
+  mod roads.lua SIGN_WHATS/slots/WHATS): one black plate with white lettering per street name and tile, on
+  the left footway, facing the road. Names come from the roads layer's `name`; motorways, trunks, service
+  roads and links get none. Uses the guide signs' glyph atlas and materials, so the Highway signs switch
+  still turns them off. London's sign tile built 2 shapes (`speeds`, `names`; 17 plates, 11.9 kB).
+- **Mapped garden walls and litter bins.** `fences.py` now renders OSM `barrier=wall` (2,854 features in
+  central London) as the mod's own 2 m brick panel with stone coping (`tools/build_garden_wall.py`,
+  `bne_garden_wall.dae`, `garden.materials.json`), skipped for city/castle/retaining/flood walls; a `height`
+  tag scales the panel. It also places a bin at every mapped `amenity=waste_basket` point (495 in central
+  London). `trees.lua` has the `gardenwall` catalog entry and loads furniture.py's existing `bin` group.
+- **Mapped street furniture was already in the infrastructure data**: kerbs, crossings, benches, bollards,
+  post boxes and bus stops (2,153 / 1,473 / 456 / 808 in the same area) are not rendered yet; walls and bins
+  are the first two.
+- **Fixed the building texture paths.** `buildings.materials.json` still pointed at the facade/brick/shop/
+  office sheet PNGs after the DDS switch; those PNGs no longer exist, so `test_own_assets` failed and the
+  game could not load the facade sheets. All 30 `t_bne_sheet_*` refs now point at the generated `.dds`
+  files, and the new garden wall reuses those materials under its own names.
+- Tests: test_roads 116 (new UKFootwayAndLinesTest), test_fences 9 (garden wall, height tag, mapped bin),
+  test_name_signs 5, test_furniture + clearance 61, test_own_assets 4, the sign suites 39 (exit/merge/
+  speed/sign packaging), test_blockworker 6. All green.
+
+
+## 2026-11-06 — fresh-cache London test: tunnel-floor crash, launcher game detection, first visual check
+
+The user asked to clear the mod cache, load the saved London Home start and let everything load again.
+
+- **Cache:** `G:\BeamNG.Earth Cache` (11 GB) moved to `G:\BeamNG.Earth Cache.bak-2026-11-06` and a fresh cache made;
+  `temp/beamngEarth` and `temp/levels/beamng_earth` (5.6 GB of game-side tiles) cleared too. Steam updated BeamNG to
+  0.40.5.0 during the run.
+- **Crash at Roupell Street (real bug):** `railways._tunnel_floor` assumed `roads.tunnel_sections` returns one floor
+  sample per input sample; the lower hull can be shorter (3001 ground samples, 700 hull samples under the Waterloo
+  tunnels), so the wet fade's `(700,) - (3001,)` broadcast raised and the whole road geotile failed. `railways._fit_floor`
+  resamples the fade to the hull's length; test `test_a_resampled_tunnel_hull_takes_the_wet_fade` covers 3001→700.
+- **Launcher stopped the server while the game ran (real bug):** `game_pids` queried tasklist with a 3 s timeout; under
+  the fresh-cache 100 % server load the query timed out, the launcher read "game closed", and stopped the world server
+  at Old Kent Road. `PROCESS_QUERY_S` is 10 s, the query retries once, and a failed query is "unknown" (assume alive)
+  instead of "closed".
+- **Startup canvas crash:** the saved `WindowPlacement` was `2 3 -1 -1 -1 -1 -9 -9 1029 1929`, a portrait window on
+  the 1920x1080 display (the StarDesk virtual display adapters were present); the game crashed in `createCanvas`
+  before the level. Removing `WindowPlacement` and setting `GraphicDisplayModes=Fullscreen` fixed it; the full
+  settings backup is `settings.json.bak-2026-11-06-test`, and `enableMcp` is true again (a PowerShell JSON write had
+  silently dropped it and the game fell back to a minimal settings file).
+- **Visual check at London Home → Roupell/Theed Street:** after the fresh load, the double yellow lines are on both
+  kerbs, the footways are raised with visible grey kerbs, a mapped round bin stands on the footway and a mapped low
+  brick garden wall runs along the pavement. 17 `names_*.cdae` sign tiles were built for the anchor (street-name
+  plates generated); 170 garden-wall rows and 5 bins in the four tiles around Roupell. The far-tree backlog was still
+  streaming at ~60 fps when the check ended; no further road-tile failures.
+- **Builds:** fixed `dist14\BeamNG.Earth-1.8.1-beta.exe` (tunnel + launcher fixes). The test itself runs the patched
+  source server; the game stays connected at Theed Street.

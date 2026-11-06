@@ -376,6 +376,11 @@ STYLES = {
     # slate roofs
     "europe_north": Style("europe_north", 0.5, (), 0.02, 0.05, 0.3, (_CLAY, _DARK, (ROOF_SLATE, (5,))), pitch=42.0,
                           paint=0.15, attached=0.75, stone=0.12),
+    # Britain and Ireland: brick terraces and pebbledash/stone houses, mostly two storeys (four storeys on a
+    # high street), shallow-to-moderate slate/tile roofs; the continent's taller blocks were making Roupell
+    # Street's two-storey terraces four storeys of white office (2026-11-06)
+    "british": Style("british", 0.8, ((STUCCO, 0.5), (SIDING, 0.15)), 0.0, 0.1, 0.8,
+                     (_CLAY, _DARK, (ROOF_SLATE, (5,))), pitch=36.0, paint=0.08, attached=0.85, stone=0.12),
     # Scandinavia and Finland: painted wooden houses (siding), little brick, dark or tiled roofs, falu-red barns
     "nordic": Style("nordic", 0.12, ((SIDING, 0.65),), 0.0, 0.08, 0.2, (_DARK, _CLAY), pitch=35.0, paint=0.2,
                     attached=0.3, barn_red=0.7),
@@ -416,6 +421,8 @@ def region_style(lat, lon):
         return STYLES["alpine"]
     if 56.0 <= lat <= 72.0 and 4.5 <= lon <= 32.0:              # Norway, Sweden, Finland (brick Copenhagen, Malmo: not)
         return STYLES["nordic"]
+    if (49.8 <= lat <= 61.0 and -8.8 <= lon <= 2.1) or (51.3 <= lat <= 55.5 and -10.8 <= lon < -5.8):
+        return STYLES["british"]                                 # Great Britain and Ireland
     if 46.0 <= lat <= 72.0 and -11.0 <= lon <= 32.0:
         return STYLES["europe_north"]
     if 30.0 <= lat < 46.0 and -10.0 <= lon <= 40.0:             # southern Europe, North Africa's coast, Levant
@@ -578,8 +585,26 @@ def plan(ring, attrs, neighbours=0, lat=None, lon=None, look=None, town=False, d
     barn = cls in BARN_CLASSES or (shed and area >= 150 and cls not in ("garage", "garages", "carport", "roof", "shelter"))
     if barn:
         floor_h = 5.5 if area >= 150 else 3.5          # one tall storey; the gable above it
+    if style.name == "british" and not (industrial or church or barn or garage):
+        floor_h = 3.0                                  # a British storey is lower than the 3.2 m default
     if h is None and nf is None:
-        if shed:
+        if style.name == "british":
+            # two storeys are the norm (terraces, semis, high-street shops); four only on a terrace's tallest
+            if row:
+                nf = 2 if seed < 0.55 else (3 if seed < 0.92 else 4)
+            elif cls in HOUSE_CLASSES or (area < 220 and not shop):
+                nf = 2 if seed < 0.8 else 1
+            elif industrial:
+                nf = 2 if area > 6000 else 1
+            elif cls == "apartments":
+                nf = 3 + int(seed * 2)
+            elif town:
+                nf = 2 if seed < 0.75 else 1
+            elif area < 900:
+                nf = 2 if seed < 0.55 else 3
+            else:
+                nf = 2 + int(seed * 2)                 # a high street / office block: two to three, not five
+        elif shed:
             nf = 1
         elif row:
             nf = 2 if seed < 0.25 else (3 if seed < 0.85 else 4)

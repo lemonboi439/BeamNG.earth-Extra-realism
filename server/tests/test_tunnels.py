@@ -460,10 +460,10 @@ class Underwater(unittest.TestCase):
         # Rotherhithe Tunnel: 1.48 km under the Thames; short enough to be a tube (TUNNEL_WET_MIN_LEN_M), its floor
         # laid under the water-covered ground; long underwater tunnels still go (the test above)
         from test_roads import features, FRAME, LON, M_LON
-        f = features([[(-300, 0), (300, 0)]], ["primary"], flags=[(0, "is_tunnel")])
+        f = features([[(-740, 0), (740, 0)]], ["primary"], flags=[(0, "is_tunnel")])     # the real 1.48 km
         tp = roads.TunnelProfiles(FRAME, lambda key: f, lambda la, lo: np.full(np.shape(la), 30.0))
-        tp.wet = lambda la, lo: np.where(np.abs((np.asarray(lo) - LON) * M_LON) < 100, 6.0, 0.0)
-        parts = tp.parts([f], (-400.0, -64.0, 400.0, 64.0))
+        tp.wet = lambda la, lo: np.where(np.abs((np.asarray(lo) - LON) * M_LON) < 240, 6.0, 0.0)
+        parts = tp.parts([f], (-800.0, -64.0, 800.0, 64.0))
         self.assertTrue(parts, "a short river crossing stays a tunnel")
         z = np.asarray(parts[0][3], np.float64)
         self.assertLess(float(np.nanmin(z)), 26.0, "the floor is laid under the water-covered ground")

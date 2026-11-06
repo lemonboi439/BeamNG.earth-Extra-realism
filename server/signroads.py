@@ -19,7 +19,7 @@ import railtags
 import roads
 import signcontext
 
-Spec = namedtuple('SignRoad', 'width cls oneway dir link', defaults=(False,))
+Spec = namedtuple('SignRoad', 'width cls oneway dir link name', defaults=(False, ''))
 NEIGHBOURHOODS = 64             # combined rows kept (Context._hoods)
 CELL_FRAMES = 4                 # anchors a cell keeps rows for
 
@@ -63,8 +63,8 @@ def cell_specs(feats, urban=None, widths=None, left_hand=False):
     return got
 
 
-def spec(value, link=False):
-    return Spec(value.width, value.cls, value.oneway, value.dir, link)
+def spec(value, link=False, name=''):
+    return Spec(value.width, value.cls, value.oneway, value.dir, link, name)
 
 
 def cross(points):
@@ -88,9 +88,9 @@ def feature_id(feats, i):
     return f'osm:w{wid}:{feats.ids[i]}' if wid else str(feats.ids[i])
 
 
-def outline(value, line, frame=None, left_hand=False, link=False):
+def outline(value, line, frame=None, left_hand=False, link=False, name=''):
     """Use the beta renderer's centreline, width and mitered offsets unchanged."""
-    return spec(value, link), line, value.width
+    return spec(value, link, name), line, value.width
 
 
 def polygon(line, width):
@@ -116,17 +116,19 @@ class Context(signcontext.Context):
             return got
         rows, polys = [], []
         specs = cell_specs(feats, self.urban, self.widths, left_hand)
+        names = feats.attrs.get('name')
         for i, value in enumerate(specs):
             if value is None:
                 continue
             fid = feature_id(feats, i)
             link = is_link(feats, i)
+            name = str(names[i]) if names is not None else ''
             for ring in roads.ground_parts(feats, i):
                 if len(ring) < 2:
                     continue
                 e, n = mapgeom.enu_xy(feats, frame, ring)
                 line = np.c_[e, n, np.zeros(len(ring))]
-                sp, line, width = outline(value, line, frame, left_hand, link)
+                sp, line, width = outline(value, line, frame, left_hand, link, name)
                 rows.append((fid, sp, line, width))
                 polys.append(polygon(line, width))
         got = (rows, polys)

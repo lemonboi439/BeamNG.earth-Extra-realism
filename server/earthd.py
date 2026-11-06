@@ -3,7 +3,7 @@
 (and V1_1_SPEC.md).
 
     python3 server/earthd.py [--port 47613] [--user-dir DIR] [--cache-dir DIR] [--far-format cdae|dae]
-                             [--imagery usgs,eox2023,eox2016|off] [--near-visual mesh|terrain]
+                             [--imagery usgs,eox2025,eox2023,eox2016|off] [--near-visual mesh|terrain]
                              [--cells 32|64] [--tex 256,256,256,512] [--block 1024|512] [--horizon]
                              [--deshadow off|lambert|full] [--colormatch off|s2]
                              [--weather on|off] [--gravity on|off] [--offline] [--credits on|off]
@@ -7656,8 +7656,8 @@ def main():
                     help="Linux: idle scheduling (the server runs only on CPU time the game leaves) or normal; auto "
                          "(default): idle unless the server has cores of its own (--pin)")
     ap.add_argument("--imagery", type=imagerymod.parse_chain, default=imagerymod.DEFAULT_CHAIN,
-                    help="satellite imagery source chain, first with data wins: any of usgs,eox2023,eox2016, "
-                         "or 'off' for the v1.2 palette look (default: usgs,eox2023,eox2016)")
+                    help="satellite imagery source chain, first with data wins: any of usgs,eox2025,eox2023,eox2016, "
+                         "or 'off' for the v1.2 palette look (default: usgs,eox2025,eox2023,eox2016)")
     ap.add_argument("--near-visual", choices=NEAR_VISUALS, default="mesh",
                     help="mesh: the ground near the player is drawn by 64/128 m tiles and the terrain block is "
                          "physics only (default); terrain: the v1.2 look (the terrain block is drawn); detail: the "

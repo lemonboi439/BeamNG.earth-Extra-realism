@@ -3,8 +3,10 @@
 Sources (all Web-Mercator XYZ, 256 px tiles, no key; verified 2026-10-10):
   usgs     USGS The National Map ImageryOnly. Public domain. US only, z <= 16 (~1.9 m/px at 36 N).
            Outside its coverage it answers 404, or (at low zooms) a uniform white tile.
-  eox2023  Sentinel-2 cloudless 2023 by EOX. Global, ~10 m (native around z14). CC BY-NC-SA 4.0.
-           Open ocean is a uniform deep blue tile (a real colour, not "no data").
+  eox2025  Sentinel-2 cloudless 2025 by EOX. Global, ~10 m (native around z14). CC BY-NC-SA 4.0.
+           The newest cloudless mosaic: the first global fallback. Open ocean is a uniform deep blue
+           tile (a real colour, not "no data").
+  eox2023  Sentinel-2 cloudless 2023 by EOX. Global, ~10 m. CC BY-NC-SA 4.0. Older fallback.
   eox2016  Sentinel-2 cloudless 2016 by EOX. Global, ~10 m. CC BY 4.0. Last fallback.
 
 A texture is rendered for a tile's ENU footprint by sampling the imagery at every texel centre:
@@ -19,7 +21,7 @@ Caching: raw tiles on disk under <cache>/<source>/<z>/<x>/<y>.jpg (whatever form
 sent), 404s remembered as <y>.404 markers (as dem.py does; they expire after the host's miss_ttl,
 90 days), decoded tiles in an in-memory LRU. Downloads run on a small pool (FETCH_WORKERS <= 6)
 through a netfetch.Fetcher: the host's rate limit, concurrency cap, retries and circuit breaker
-(keyed by host, so eox2023 and eox2016 share one), one persistent HTTPS connection per thread and
+(keyed by host, so eox2025, eox2023 and eox2016 share one), one persistent HTTPS connection per thread and
 host. A source whose host cannot be asked fails at once (ImageryError), and render() takes the
 next source. prefetch() asks with kind="prefetch" (dropped when the host's bucket is low; render
 then fetches the tile on demand).
@@ -127,6 +129,9 @@ class Source:
 SOURCES = {
     "usgs": Source("usgs", "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}",
                    16, "USGS The National Map (public domain)", probe_zooms=(10, 12), min_zoom=10),
+    "eox2025": Source("eox2025", "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/g/{z}/{y}/{x}.jpg",
+                      14, "EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified "
+                          "Copernicus Sentinel data 2025), CC BY-NC-SA 4.0"),
     "eox2023": Source("eox2023", "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2023_3857/default/g/{z}/{y}/{x}.jpg",
                       14, "EOxCloudless https://cloudless.eox.at by EOX IT Services GmbH (Contains modified "
                           "Copernicus Sentinel data 2023), CC BY-NC-SA 4.0"),
@@ -162,7 +167,7 @@ SOURCES["md6in"] = Source(
              "?bbox={bbox}&bboxSR=3857&imageSR=3857&size={size},{size}&format=jpg&f=image",
     17, "State of Maryland, MD iMAP / DoIT six-inch imagery", min_zoom=17, export=2, lazy=True,
     bounds=(37.88, -79.49, 39.73, -75.04), nodata="white", leaf_off=True)
-BASE_CHAIN = ("md6in", "naipusda", "naip", "usgs", "eox2023", "eox2016")     # the chain before the regional sources
+BASE_CHAIN = ("md6in", "naipusda", "naip", "usgs", "eox2025", "eox2023", "eox2016")   # before the regional sources
 # Regional aerial imagery (imagery_regional.py: state and national orthophoto services, each within its box)
 import bcortho as bcorthomod  # noqa: E402
 import imagery_regional  # noqa: E402
@@ -182,10 +187,10 @@ for _n, (_url, _attr, _bounds, _kind, _leaf) in imagery_regional.REGIONAL.items(
 SOURCES["bcortho"] = Source("bcortho", bcorthomod.URL, 17, bcorthomod.ATTRIBUTION, min_zoom=17, export=2, lazy=True,
                             bounds=(47.9, -130.1, 51.1, -121.9), nodata="black")
 DEFAULT_CHAIN = ("md6in", *imagery_regional.REGIONAL, *(("bcortho",) if os.environ.get("BNE_BCORTHO", "1") != "0" else ()),
-                 "naipusda", "naip", "usgs", "eox2023", "eox2016")
+                 "naipusda", "naip", "usgs", "eox2025", "eox2023", "eox2016")
 # The line the mod shows (V1_3_SPEC §C), for the default chain: every source's own credit, EOX's in
 # its June 2026 wording (docs/research/2026-10-10-rate-limits.md: "EOxCloudless https://cloudless.eox.at
-# by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2023)", 2016: "... 2016 & 2017").
+# by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2025 / 2023)", 2016: "... 2016 & 2017").
 ATTRIBUTION = "Imagery: " + "; ".join(SOURCES[n].attribution for n in DEFAULT_CHAIN)
 
 

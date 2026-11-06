@@ -976,6 +976,17 @@ def _equalize_viaducts(rails, zb, members):
         zb[n] = _avg(np.asarray(zb[n], np.float64), 3)
 
 
+def _fit_floor(values, floor):
+    """values (the tunnel's own samples) resampled to floor's length (roads.tunnel_sections returns the lower convex
+    hull, often fewer samples: a wet tunnel under the Thames' docks read 3001 input samples and a 700-sample floor)."""
+    values = np.asarray(values, np.float64)
+    if len(values) == len(floor):
+        return values
+    if len(floor) == 0:
+        return np.zeros(0, np.float64)
+    return np.interp(np.linspace(0.0, 1.0, len(floor)), np.linspace(0.0, 1.0, len(values)), values)
+
+
 def _tunnel_floor(xy, g, wet_mask=None, depth=0.0, ramp=None):
     """A rail tunnel's bed line along xy (k, 2): the lower convex hull of the ground g over it (roads.tunnel_sections,
     the line under a hill with its ends at the portals), laid TUNNEL_DEPTH_M under the ground where water covers it
@@ -986,12 +997,12 @@ def _tunnel_floor(xy, g, wet_mask=None, depth=0.0, ramp=None):
     if depth:
         r = TUNNEL_WET_RAMP_M if ramp is None else float(ramp)
         share = np.minimum(np.clip(s / r, 0.0, 1.0), np.clip((s[-1] - s) / r, 0.0, 1.0))
-        floor = floor - float(depth) * share
+        floor = floor - float(depth) * _fit_floor(share, floor)
     if wet_mask is not None and wet_mask.any():
         r = max(1, int(round(TUNNEL_WET_RAMP_M / STEP_M)))
         k = np.ones(2 * r + 1) / (2 * r + 1)
         share = np.convolve(wet_mask.astype(np.float64), k, mode="same")
-        floor = floor - TUNNEL_DEPTH_M * share
+        floor = floor - TUNNEL_DEPTH_M * _fit_floor(share, floor)
     return np.asarray(floor, np.float64)
 
 

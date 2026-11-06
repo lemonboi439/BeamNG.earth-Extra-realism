@@ -39,7 +39,7 @@ M.LEVEL_ID = 'beamng_earth'
 M.SCHEMA = {
   -- the quality presets (M.PRESETS; the user, 2026-10-28: "proper quality presets", picked from the hardware on the
   -- first run: M.detectQuality); 'custom' once a knob is changed away from every preset
-  quality = { kind = 'enum', default = 'auto', values = { 'auto', 'low', 'traffic', 'medium', 'high', 'ultra', 'extreme', 'custom' },
+  quality = { kind = 'enum', default = 'auto', values = { 'auto', 'performance', 'low', 'traffic', 'medium', 'high', 'ultra', 'extreme', 'custom' },
     label = 'Quality' },
   -- tree density (trees.lua QUALITY_LEVELS: ranks and tile caps) and draw distance (DISTANCES: the rings and the
   -- server's tree tile reach), split 2026-10-28 (the user: "give player much more control in the graphics settings")
@@ -60,7 +60,9 @@ M.SCHEMA = {
     label = 'Building draw distance' },
   -- the drawn terrain block's aerial photo (px over the 1 km block; terrain.setPhotoSize, the server's photoPx):
   -- from the next level load
-  groundPhoto = { kind = 'enum', default = '2048', values = { '1024', '2048', '4096' }, label = 'Ground photo resolution' },
+  -- 4096 exhausted the RTX 5060's 8 GB VRAM in a long London drive (2026-11-06): leave it for 12 GB+ cards
+  groundPhoto = { kind = 'enum', default = '2048', values = { '1024', '2048', '4096' },
+    label = 'Ground photo resolution (4096 needs 12 GB+ VRAM)' },
   -- the grass's reach (groundcover.lua DISTANCE)
   grassDistance = { kind = 'enum', default = 'normal', values = { 'near', 'normal', 'far' }, label = 'Grass draw distance' },
   -- the engine's shape detail in our level (enginepref.lua: $pref::TS::detailAdjust; 'game': the game's Mesh Quality)
@@ -153,6 +155,13 @@ M.HIDDEN = { welcomeSeen = true, updateDismissed = true, devNoticeSeen = true, q
 M.PRESET_KEYS = { 'trees', 'treeDistance', 'groundCover', 'groundCoverDensity', 'grassDistance', 'rocks', 'nightLights', 'distantTrafficQuality',
   'viewDistanceMode', 'viewDistanceKm', 'terrainDetail', 'buildingDistance', 'groundPhoto', 'objectDetail' }
 M.PRESETS = {
+  -- The VRAM-saver subsetting (the user, 2026-11-06: "optimise the game too as a subsetting of the mod"): the
+  -- lowest ground photo (1024² instead of 4096², 1/16 the VRAM per block), low terrain/trees, no grass carpet and
+  -- only the nearest buildings' detail. It still draws the roads, sidewalks, walls and near buildings.
+  performance = { trees = 'low', treeDistance = 'near', groundCover = false, groundCoverDensity = 'low',
+    grassDistance = 'near', rocks = false, nightLights = 'few', viewDistanceMode = 'fixed', viewDistanceKm = 25,
+    terrainDetail = 'low', buildingDistance = 'near', groundPhoto = '1024', objectDetail = 'game',
+    distantTrafficQuality = 'low' },
   low = { trees = 'low', treeDistance = 'near', groundCover = false, groundCoverDensity = 'low', grassDistance = 'near',
     rocks = true, nightLights = 'few', viewDistanceMode = 'fixed', viewDistanceKm = 40, terrainDetail = 'low',
     buildingDistance = 'near', groundPhoto = '1024', objectDetail = 'game', distantTrafficQuality = 'low' },
@@ -171,9 +180,10 @@ M.PRESETS = {
     buildingDistance = 'far', groundPhoto = '2048', objectDetail = 'game', distantTrafficQuality = 'high' },
   extreme = { trees = 'extreme', treeDistance = 'max', groundCover = true, groundCoverDensity = 'high',
     grassDistance = 'far', rocks = true, nightLights = 'many', viewDistanceMode = 'horizon', viewDistanceKm = 100,
-    terrainDetail = 'extreme', buildingDistance = 'max', groundPhoto = '4096', objectDetail = 'extreme', distantTrafficQuality = 'high' },
+    terrainDetail = 'extreme', buildingDistance = 'max', groundPhoto = '2048', objectDetail = 'extreme',
+    distantTrafficQuality = 'high' },       -- 4096 photos exhausted an 8 GB card (2026-11-06)
 }
-M.PRESET_ORDER = { 'low', 'traffic', 'medium', 'high', 'ultra', 'extreme' }
+M.PRESET_ORDER = { 'performance', 'low', 'traffic', 'medium', 'high', 'ultra', 'extreme' }
 
 -- The server's knobs (core.sendGraphics, the 'graphics' message): the far field's K table times TERRAIN_DETAIL (64
 -- cells, Baltimore's first selection, 2026-10-28: 0.75 -> 0.78x the far tiles, 1.3 -> ~1.3x, 1.6 -> ~1.6x, 2 -> 2.1x;
