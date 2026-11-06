@@ -1456,6 +1456,9 @@ def main():
     ap.add_argument("--no-terminal", action="store_true", help="Linux: no terminal window (log to a file)")
     ap.add_argument("--no-update-check", action="store_true",
                     help="do not ask GitHub for a newer BeamNG.Earth before the game starts")
+    ap.add_argument("--low-ram", action="store_true",
+                    help="fewer road/far workers and a 1.4 GB per-worker cache shed: for a 32 GB PC sharing its RAM "
+                         "with realistic traffic (the server otherwise holds 13-25 GB)")
     ap.add_argument("extra", nargs=argparse.REMAINDER, help="after --: more options for the server")
     args = ap.parse_args()
     if IS_WIN:
@@ -1705,6 +1708,10 @@ def run(args):
                 "Close its window (or end 'BeamNG.Earth' in the task manager), then start again.")
         sys.exit(1)
     log_path = os.path.join(data_dir(), "logs", "server.log")
+    if args.low_ram:
+        os.environ["BNGE_SHED_MB"] = "1400"
+        os.environ["BNGE_MAX_BASE_PX"] = "2048"
+        extra = ["--workers", "2", "--road-processes", "2"] + extra
     server = start_server(user_dir, extra, log_path, game_running=bool(running))
     beammp = None
     try:

@@ -312,6 +312,9 @@ BASE_AO_VFS = "/levels/beamng_earth/art/terrains/bngEarth_base_ao.png"   # every
 # layer's aoBaseTex is the one of the size in use, so the packed cache entry's key (terraincache.base_key) follows it.
 # Measured 2026-10-28 (quality-presets notes): 4096 costs ~1-3 s a block on a PC, 6-12 s on a Steam Deck.
 BASE_SIZES = (1024, 2048, 4096)
+# A memory-constrained server (launcher --low-ram) caps the block photo here: 4096² is ~64 MB a block and 1-3 s
+# of painting, 2048² a quarter of both. The mod's graphics.photoPx is clamped to it.
+BASE_PX_MAX = int(os.environ.get("BNGE_MAX_BASE_PX", "0") or 0)
 
 
 def base_ao_vfs(px):
@@ -2366,6 +2369,8 @@ class Server:
             px = int(px)
         except (TypeError, ValueError):
             return False
+        if BASE_PX_MAX:
+            px = max((p for p in BASE_SIZES if p <= BASE_PX_MAX), default=BASE_SIZES[0])
         if px not in BASE_SIZES or px == self.base_px:
             return False
         self.base_px = px

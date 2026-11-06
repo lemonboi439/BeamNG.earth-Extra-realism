@@ -44,6 +44,8 @@ def main():
     ap.add_argument("--layers", default=",".join(DEFAULT_LAYERS),
                     help="comma-separated map layers (default: all vector/landcover/canopy)")
     ap.add_argument("--no-dem", action="store_true", help="skip the DEM tiles")
+    ap.add_argument("--imagery", action="store_true",
+                    help="also fetch the satellite tiles the 1 km base photos sample (many times the map data; slow)")
     ap.add_argument("--bake", action="store_true", help="bake plans/facts after the download (bake_area.py)")
     ap.add_argument("--out", help="the .bnge pack path (default <cache>/bake/<area>.bnge)")
     ap.add_argument("--procs", type=int, default=4, help="download threads / bake processes")
@@ -111,6 +113,29 @@ def main():
         except Exception as ex:
             print(f"DEM: {type(ex).__name__}: {ex}", flush=True)
 
+    if a.imagery:
+        try:
+            import geodesy
+            import imagery as imagemod
+            img = imagemod.Imagery(cache, fetch_workers=4, fetcher=net)
+            la0, lo0 = s, w
+            step_m = 1024.0
+            n_blocks = 0
+            la = s + (n - s) / 2.0
+            # (block centres every 1 km, a local frame each: the base photo's ENU footprint)
+            while la <= n:
+                lo = w + (e - w) / 2.0
+                while lo <= e:
+                    frame = geodesy.EnuFrame(la, lo)
+                    img.prefetch(frame, -step_m / 2, -step_m / 2, step_m, 4096)
+                    n_blocks += 1
+                    lo += step_m / (111320.0 * max(0.05, math.cos(math.radians(la))))
+                la += step_m / 110540.0
+            print(f"imagery: prefetch requested for {n_blocks} base-photo blocks (background)", flush=True)
+            img.pool.shutdown(wait=True)
+            img.urgent_pool.shutdown(wait=True)
+        except Exception as ex:
+            print(f"imagery: {type(ex).__name__}: {ex}", flush=True)
     if a.bake:
         out = a.out or os.path.join(cache, "bake", a.name + ".bnge")
         os.makedirs(os.path.dirname(out), exist_ok=True)
