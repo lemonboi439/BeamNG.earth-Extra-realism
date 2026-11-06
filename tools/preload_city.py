@@ -118,13 +118,12 @@ def main():
             import geodesy
             import imagery as imagemod
             img = imagemod.Imagery(cache, fetch_workers=4, fetcher=net)
-            la0, lo0 = s, w
             step_m = 1024.0
             n_blocks = 0
-            la = s + (n - s) / 2.0
+            la = s + step_m / 110540.0 / 2.0
             # (block centres every 1 km, a local frame each: the base photo's ENU footprint)
             while la <= n:
-                lo = w + (e - w) / 2.0
+                lo = w + step_m / (111320.0 * max(0.05, math.cos(math.radians(la)))) / 2.0
                 while lo <= e:
                     frame = geodesy.EnuFrame(la, lo)
                     img.prefetch(frame, -step_m / 2, -step_m / 2, step_m, 4096)
