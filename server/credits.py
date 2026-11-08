@@ -106,6 +106,8 @@ FEATURES = {
     "map:Overture": "Overture Maps", "map:OpenStreetMap": "OpenStreetMap", "map:Microsoft ML Buildings": "Microsoft",
     "map:TomTom": "TomTom", "map:Esri Community Maps": "Esri", "map:Google Open Buildings": "Google",
     "map:USGS Lidar": "USGS Lidar", "map:doi:10.5281/zenodo.8174931": "Shi et al. (East Asia buildings)",
+    "building:ealidar": "Environment Agency LiDAR (OGL)",
+    "kerb:tfl-red-routes": "TfL Red Routes",
     "land:esa-worldcover": "ESA WorldCover", "canopy:meta-wri-chm": "Meta & WRI",
     "canopy:lidarbc-chm": "LidarBC (OGL-BC)",
     "sea:noaa": "NOAA NCEI", "bridge:nbi": "FHWA NBI", "bridge:wikidata": "Wikidata",

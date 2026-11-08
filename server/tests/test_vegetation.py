@@ -486,3 +486,31 @@ class FarmFoliageTest(unittest.TestCase):
         self.assertLessEqual(nlines, 14)
         blocked = np.ones((rows, cols), bool)
         self.assertEqual(len(veg.farm_foliage(feats, chm, blocked, None)), 0)
+
+
+class MappedHedgeTest(unittest.TestCase):
+    def test_mapped_hedge_is_clipped_and_bounded(self):
+        import mapgeom
+        frame = geodesy.EnuFrame(40.0, -76.0)
+        e = np.linspace(-180.0, 180.0, 160)
+        n = np.full_like(e, 0.0)
+        lat, lon, _ = frame.enu_to_geodetic(e, n, np.zeros(len(e)))
+        line = np.stack([lon, lat], 1)
+        feats = mapgeom.build("infrastructure", np.array(["hedge-1"]), [(mapgeom.LINE, [line])])
+        feats.attrs["class"] = np.array(["hedge"], object)
+        feats.attrs["subtype"] = np.array([""], object)
+        feats.attrs["tags"] = np.array(["barrier=hedge"], object)
+        x, y = veg._to3857(line[:, 0], line[:, 1])
+        dx = 2.0
+        chm = Raster(np.zeros((80, int(np.ceil((x.max() - x.min()) / dx))), np.uint8),
+                     float(x.min()), float(y.max() + 80), dx)
+        clear = np.zeros(chm.data.shape, bool)
+        bounds = (float(line[:, 0].min()), float(line[:, 1].min()),
+                  float(line[:, 0].mean()), float(line[:, 1].max()))
+        items = veg.hedge_items(feats, chm, clear, bounds)
+        self.assertGreater(len(items), 20)
+        self.assertLessEqual(len(items), veg.HEDGE_MAX_PER_CELL)
+        self.assertTrue(np.all(items.kind == veg.KIND_BUSH))
+        self.assertTrue(np.all(items.group == veg.G_SHRUB))
+        self.assertTrue(np.all(items.lon < bounds[2]))
+        self.assertEqual(len(items), len(veg.hedge_items(feats, chm, clear, bounds)))

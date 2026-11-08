@@ -129,6 +129,47 @@
     "castShadows": false,
     "annotation": "BNE"
   },
+  "driveway_concrete": {
+    "name": "driveway_concrete",
+    "mapTo": "driveway_concrete",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "f1b1b8c2-7f57-5c0b-9a9d-c7f3b4e5d821",
+    "Stages": [
+      {
+        "baseColorFactor": [0.82, 0.82, 0.80, 1],
+        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
+        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
+        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds"
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": false,
+    "annotation": "BNE procedural driveway apron; reuses the project's concrete maps"
+  },
+  "bne_speed_hump": {
+    "name": "bne_speed_hump",
+    "mapTo": "bne_speed_hump",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "88519cb9-5e59-59b5-bbf5-2b6f2c023ea7",
+    "Stages": [
+      {
+        "baseColorFactor": [0.19, 0.19, 0.20, 1],
+        "roughnessFactor": 0.92,
+        "metallicFactor": 0.0
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": false,
+    "castShadows": true,
+    "annotation": "BNE speed hump asphalt"
+  },
   "m_gm_concrete_plain": {
     "name": "m_gm_concrete_plain",
     "mapTo": "m_gm_concrete_plain",
@@ -623,6 +664,29 @@
           0.92,
           0.72,
           0.06,
+          1
+        ]
+      },
+      {},
+      {},
+      {}
+    ],
+    "translucent": true,
+    "castShadows": false,
+    "annotation": "BNE"
+  },
+  "line_red": {
+    "name": "line_red",
+    "mapTo": "line_red",
+    "class": "Material",
+    "version": 1.5,
+    "persistentId": "2ac18fda-7313-5b7d-8dee-2b1d007722e6",
+    "Stages": [
+      {
+        "baseColorFactor": [
+          0.74,
+          0.07,
+          0.05,
           1
         ]
       },

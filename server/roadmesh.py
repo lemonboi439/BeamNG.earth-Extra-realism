@@ -932,6 +932,17 @@ def build(frame, chunks, elev, origin, lift=0.0, clip=None, follow=False, q=None
             k0 += 2 * k
         else:                                   # on a deck: over its opaque concrete top
             z = np.concatenate((fz, fz)) + LIFT[layer] + DECK_SKIN
+        crown = c.get("crown")
+        if crown and len(z) == 2 * k:
+            # a road's crown: the centre line a few cm above the edges (the lane strips' inner edges meet high,
+            # their outer edges at the gutter); a single-lane strip has no centre row and stays flat
+            rise, half, off = (float(v) for v in crown)
+            half = max(half, 1e-9)
+            w2 = float(c.get("w") or 0.0) / 2.0
+            dzl = rise * max(0.0, 1.0 - ((off + w2) / half) ** 2)
+            dzr = rise * max(0.0, 1.0 - ((off - w2) / half) ** 2)
+            z[:k] += dzl
+            z[k:] += dzr
         if m not in mats:
             mats.append(m)
         mi = mats.index(m)
@@ -980,8 +991,8 @@ def build(frame, chunks, elev, origin, lift=0.0, clip=None, follow=False, q=None
         if c["m"] not in mats:
             mats.append(c["m"])
         P.append(np.c_[pq[:, :2], z])
-        UV.append(np.asarray(c["uvq"], np.float64) if c.get("uvq") is not None else       # (a decal sheet's cell:
-                  np.c_[pq[:, 0] / 8.0, pq[:, 1] / float(c.get("tl") or 10.0)])          # markings.arrow_quad)
+        UV.append(np.asarray(c["uvq"], np.float64) if c.get("uvq") is not None else
+                  np.c_[pq[:, 0] / 8.0, pq[:, 1] / float(c.get("tl") or 10.0)])       # (a filled piece, m x tile)
         fan = np.array([(nverts, nverts + a, nverts + a + 1) for a in range(1, k - 1)])
         pts = np.c_[pq[:, :2], z]
         nrm = np.cross(pts[fan[:, 1] - nverts] - pts[fan[:, 0] - nverts], pts[fan[:, 2] - nverts] - pts[fan[:, 0] - nverts])
@@ -1327,6 +1338,21 @@ def deck(chunks, origin, piers=(), context=(), beams=(), ground=(), parapets=Non
         quads(L, Lb, 0.0, 0.1, v, v, side, out_l)
         quads(R, Rb, 0.0, 0.1, v, v, side, -out_l)
         quads(Lb, Rb, 0.0, 1.0, v, v, side, np.array([0.0, 0.0, -1.0]))
+        # its end faces at the abutments (the deck's open end, seen from below, was a hole into the slab; a chunk
+        # ending at a tile border stays open, the next tile's goes on)
+        ends_ab = c.get("abut") or ()
+        if k >= 2 and ends_ab:
+            org = np.asarray(origin, np.float64)
+            for e, nb in ((0, 1), (-1, -2)):
+                mid_e = (L[e] + R[e]) * 0.5 + org      # (the abut points are in the tile's frame)
+                if not any(np.hypot(*(np.asarray(q, np.float64)[:2] - mid_e[:2])) <= 0.75 for q in ends_ab):
+                    continue
+                t = (L[e] - L[nb])[:2]
+                ln = float(np.hypot(*t))
+                if ln < 1e-9:
+                    continue
+                quads(np.array([L[e], R[e]]), np.array([Lb[e], Rb[e]]), 0.0, 1.0,
+                      np.array([v[e], v[e]]), np.array([v[e], v[e]]), side, np.r_[t / ln, 0.0])
         if c.get("tunnel"):                     # a tunnel's floor: the slab alone
             continue
         # girders under the slab
@@ -1930,6 +1956,11 @@ LOW_CAP_M = 7.0            # m a low arch's stone top runs back from its portal 
                            # dips to the floor and is cut away (roads.arch_raise, LOW_HOLE_M + LOW_HOLE_STEP): from
                            # above a row of dark terrain teeth behind the face (79th Street Transverse, 2026-10-17)
 TUNNEL_OVERLAP = 0.25      # m a tube piece reaches past a tile edge
+PORTAL_WING_M = 14.0       # m of wing wall along the approach from a full tunnel's portal face ...
+PORTAL_WING_SPLAY = 1.5    # ... flaring this far out from the road's edge ...
+PORTAL_WING_TOP = 0.8      # ... its top this far over the vault at the face, ...
+PORTAL_WING_END_H = 0.9    # ... this high at its far end, ...
+PORTAL_WING_FOOT = 0.8     # ... and its foot this far under the floor
 TUNNEL_LIGHT = "bne_tunnel_light"   # the lamps' emissive material (levels/beamng_earth/art/shapes/beamngEarth)
 TUNNEL_LAMP_EVERY = 6.0    # m between the lamp fixtures along each wall ...
 TUNNEL_LAMP_L = 1.2        # ... each this long, ...
@@ -2050,6 +2081,7 @@ def tunnel(chunks, origin, walls=()):
     P, T, UV, M = [], [], [], []           # M: per T entry its material index (0 concrete, 1 lamps, 2 stone, 3 dark stone,
                                             # 4 soil)
     nv = _retaining_walls(walls, np.asarray(origin, np.float64), P, T, UV, M, 0) if walls else 0
+    wings = []                 # (a full tunnel's portal wing walls: along the approach out from each side of the face)
     for (left, right, v, _, _, z), c in rb:
         # a piece ending at a tile edge reaches TUNNEL_OVERLAP past it: the next tile's piece meets it there without a
         # hairline of daylight (2026-10-17, inside Eisenhower)
@@ -2143,6 +2175,37 @@ def tunnel(chunks, origin, walls=()):
             if low and (cap_m is None or cap_m >= LOW_CAP_MIN):
                 nv = _arch_cap(P, T, UV, M, nv, mid, u, z, at, k, float(np.max(o[:, 0])), float(o[:, 1].max()), th, origin,
                                LOW_CAP_M if cap_m is None else min(LOW_CAP_M, float(cap_m)), 2 if stone else 0)
+        # a road tunnel's portal wings: walls along the approach from the face's sides, out and away from the road,
+        # descending into the ground (the map has the tunnel, not the walls that flank its mouth; Rotherhithe's
+        # brick approach walls and Gotthard's concrete portal flanks stood bare, 2026-11-07). A low arch in concrete
+        # is a major road's cut-and-cover box: its wings reach its face's top, a park's stone arch keeps its cap.
+        if not low or c.get("concrete"):
+            for end, at, nb in ((0, 0, 1), (1, -1, -2)):
+                if not portal[end] or len(mid) < 2:
+                    continue
+                t = mid[at] - mid[nb]
+                n = float(np.hypot(*t))
+                if n < 1e-9:
+                    continue
+                w = t / n                       # outward along the approach
+                top0 = th + PORTAL_WING_TOP
+                if low:
+                    pup = pups[0 if end == 0 else 1]
+                    top0 = th + max(LOW_PORTAL_UP, float(pup) if pup is not None else 0.0) - 0.3
+                for sg in (1.0, -1.0):
+                    uu = u[at] * sg
+                    b0 = mid[at] + uu * hw            # (flush with the tube's wall, the mouth's side)
+                    wings.append({
+                        "base": np.array([b0, b0 + w * PORTAL_WING_M + uu * PORTAL_WING_SPLAY]),
+                        "top": np.array([z[at] + top0, z[at] + PORTAL_WING_END_H]),
+                        "foot": np.full(2, z[at] - PORTAL_WING_FOOT),
+                        "toward": np.array([-uu, -uu]),
+                        "thick": np.full(2, WALL_COPING_M),     # (all stone/concrete: no soil strip on top)
+                        "parapet": True,
+                        "concrete": not stone,
+                    })
+    if wings:
+        nv = _retaining_walls(wings, np.asarray(origin, np.float64), P, T, UV, M, nv)
     allm = [TUNNEL_SIDE, TUNNEL_LIGHT, TUNNEL_STONE, TUNNEL_STONE_IN, TUNNEL_SOIL, TUNNEL_INNER, WALL_SCREE]
     Tall = np.concatenate(T)
     Mall = np.concatenate([np.full(len(t), m, np.int64) for t, m in zip(T, M)]) if M else np.zeros(len(Tall), np.int64)

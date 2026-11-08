@@ -512,12 +512,20 @@ class DoorTest(unittest.TestCase):
                 break
         self.assertIsNotNone(spec.wall)
         drives = []
-        bld.doors([(spec, 0.0, 0.0)], [(np.array([(-50.0, 6.0), (2000.0, 6.0)]), 4.0, "residential", True)], 0.0, 0.0,
-                  drives)
+        rows = bld.doors([(spec, 0.0, 0.0)], [(np.array([(-50.0, 6.0), (2000.0, 6.0)]), 4.0, "residential", True)],
+                         0.0, 0.0, drives)
         self.assertEqual(len(drives), 1)
+        self.assertIn(drives[0]["m"], {look["m"] for look in bld.DRIVEWAYS})
         n = np.array(drives[0]["n"])
         self.assertAlmostEqual(n[0, 1], 19.8, delta=0.3, msg="from the front wall")
         self.assertAlmostEqual(n[-1, 1], 10.1, delta=0.3, msg="to the road's edge")
+        # a brick gate pier at each side of the mouth, on the frontage line behind the footway
+        piers = [r for r in rows if r[0] == "gatepier"]
+        self.assertEqual(len(piers), 2)
+        for p in piers:
+            self.assertAlmostEqual(p[2], 6.0 + 4.0 + bld.FENCE_BACK_M, delta=0.3)
+            self.assertAlmostEqual(p[6], 1.11, places=3)
+        self.assertAlmostEqual(abs(piers[0][1] - piers[1][1]), bld.DRIVEWAY_W + 0.7, delta=0.05)
 
     def test_porches_on_the_front_of_some_houses(self):
         with_porch = 0

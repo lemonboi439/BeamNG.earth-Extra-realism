@@ -46,6 +46,12 @@ Direct national endpoints were tested but are **not** added as parallel runtime 
   EPSG:3857 responses; Mapterhorn already reads 3DEP where it exists. Adding it on the critical
   path would make a fresh US block 10-20 s slower per tile for no detail gain.
 
+**EA DSM for heights (2026-11-07).** The EA LiDAR Composite DSM 1 m (WCS 1.0.0, GeoTIFF) is now read in
+England where Overture has no building height: `server/ealidar.py` fetches 1024 m blocks at 2 m pixels
+(~0.6 s, cached on disk and in a 32-block LRU) and `buildings._ea_height` takes the 90th percentile of the
+surface over a footprint less the ground at its walls. It only fills missing data (a mapped Overture height
+is kept), so it costs nothing on London tiles whose heights are already in Overture.
+
 The routing rule is therefore unchanged and correct: Mapterhorn first, AWS if it cannot answer,
 and the opt-in HRDEM/LidarBC readers only where Mapterhorn has no lidar at all. If Mapterhorn's
 coverage ever drops or a national survey is missing from it, the provider belongs in

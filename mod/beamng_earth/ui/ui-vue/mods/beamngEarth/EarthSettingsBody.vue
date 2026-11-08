@@ -90,13 +90,15 @@
       </div>
       <BngButton v-else-if="item.type === 'feedback'" :accent="ACCENTS.outlined" @click="openFeedback(item.what)">{{ item.label }}</BngButton>
 
-      <!-- Clear cache: asks in the row first -->
+      <!-- Clear cache: asks in the row first (all, or one of the tiles / props / textures caches) -->
       <div v-else-if="item.type === 'action'" class="earth-inline">
-        <span v-if="cacheConfirm" class="earth-value">Delete the downloaded elevation and imagery?</span>
-        <span v-else-if="cacheResult" class="earth-value">{{ cacheResult }}</span>
-        <BngButton v-if="cacheConfirm" :accent="ACCENTS.main" @click="confirmClearCache">Clear</BngButton>
-        <BngButton v-if="cacheConfirm" :accent="ACCENTS.outlined" @click="cancelClearCache">Cancel</BngButton>
-        <BngButton v-else :accent="ACCENTS.outlined" :disabled="cacheBusy" @click="askClearCache">{{ cacheBusy ? "Clearing..." : "Clear cache" }}</BngButton>
+        <span v-if="cacheConfirm && cacheClearWhat === (item.what || '')" class="earth-value">
+          {{ item.what ? `Delete the cached ${item.what}?` : "Delete the downloaded elevation and imagery?" }}
+        </span>
+        <span v-else-if="cacheResult && cacheResultWhat === (item.what || '')" class="earth-value">{{ cacheResult }}</span>
+        <BngButton v-if="cacheConfirm && cacheClearWhat === (item.what || '')" :accent="ACCENTS.main" @click="confirmClearCache">Clear</BngButton>
+        <BngButton v-if="cacheConfirm && cacheClearWhat === (item.what || '')" :accent="ACCENTS.outlined" @click="cancelClearCache">Cancel</BngButton>
+        <BngButton v-else :accent="ACCENTS.outlined" :disabled="cacheBusy" @click="askClearCache(item.what || '')">{{ cacheBusy && cacheBusyWhat === (item.what || '') ? "Clearing..." : (item.what ? "Clear" : "Clear cache") }}</BngButton>
       </div>
 
       <!-- A path: the system's window, or typed -->
@@ -134,7 +136,7 @@ import { computed, reactive } from "vue"
 import { BngButton, BngSwitch, BngSlider, BngInput, BngSelect, BngRow, BngCardHeading, ACCENTS } from "@/common/components/base"
 import {
   config, dev, help, qualityPresets, devPresets, presetLine, detectedPick, optionConfig, categoryNamed, visibleItems,
-  cacheConfirm, cacheBusy, cacheResult, pathText, pathBusy, pathPick, pathMsg,
+  cacheConfirm, cacheClearWhat, cacheBusy, cacheBusyWhat, cacheResult, cacheResultWhat, pathText, pathBusy, pathPick, pathMsg,
   setQuality, presetName, valueOf, selectOption, onSwitchChange, onSliderChange, onNumberEnter, onDevChange, infoValue,
   openFeedback, openLink,
   confirmClearCache, askClearCache, usePath, sendPath, pathNote, typing, applyDevPreset,

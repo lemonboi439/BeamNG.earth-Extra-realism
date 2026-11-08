@@ -469,6 +469,28 @@ local function inTunnel(x, y, z)
 end
 M.inTunnel = inTunnel
 
+-- Is (x, y, z) within margin m (in plan) of a roofed space and not far above its roof? A tunnel's approach is
+-- outside its sound space, yet the river's flat water tile lies over the open ramp before the portal and cut across
+-- the road (sea.lua parks the water near it; the user's Rotherhithe screenshot 2026-11-08). Pure.
+function M.nearRoof(x, y, z, margin)
+  for _, list in pairs(spaces) do
+    for _, sp in ipairs(list) do
+      local r = sp.row
+      if M.ROOFED[r[1]] then
+        local dx, dy = x - r[2], y - r[3]
+        local c, s = math.cos(r[8]), math.sin(r[8])
+        local ex = math.max(0, math.abs(dx * c + dy * s) - r[5] / 2)
+        local ey = math.max(0, math.abs(-dx * s + dy * c) - r[6] / 2)
+        if ex * ex + ey * ey <= margin * margin and z <= r[4] + r[7] / 2 + M.ROOF_NEAR_UP_M then
+          return true
+        end
+      end
+    end
+  end
+  return false
+end
+M.ROOF_NEAR_UP_M = 20       -- m above a roofed space's top it still counts as the tunnel's approach
+
 -- The tunnels' lights at night (nightlights.lua's pool): along every tunnel box (kinds 0 and 2),
 -- every TUNNEL_LIGHT_M, TUNNEL_LIGHT_DROP_M under its roof.
 M.TUNNEL_LIGHT_M = 20

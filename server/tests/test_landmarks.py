@@ -44,6 +44,23 @@ class WaysTest(unittest.TestCase):
                 self.assertIsNone(landmarks.of(rec))
 
 
+class LondonEyeTest(unittest.TestCase):
+    def test_its_real_wheel_on_the_map_footprint(self):
+        self.assertEqual(landmarks.of("w204068874@46"), "londoneye")
+        spec = bld.landmark_spec(tower_ring(half=33.75, angle_deg=0.0), "londoneye")
+        P, _UV, T, _M, C = mesh(spec, gmin=5.0)
+        self.assertGreater(len(T), 500)
+        self.assertAlmostEqual(P[:, 2].max(), 5.0 + landmarks.EYE_H, delta=2.0, msg="135 m tall")
+        self.assertAlmostEqual(P[:, 2].min(), 5.0, delta=1.0, msg="on the bank")
+        wheel = P[np.abs(P[:, 2] - (5.0 + landmarks.EYE_HUB_Z)) < 0.5]
+        self.assertGreaterEqual(np.abs(wheel[:, 0]).max(), landmarks.EYE_R - 5.0, "its 120 m wheel")
+        self.assertTrue((C[:, :3] == landmarks.EYE_COLOUR[:3]).all())
+        lite = mesh(spec, gmin=5.0, lite=True)[2]
+        self.assertLess(len(lite), len(T) / 2, "a lighter far model")
+        col = mesh(spec, gmin=5.0, collision=True)[0]
+        self.assertGreater(len(col), 0, "its platform and legs collide")
+
+
 class EiffelTest(unittest.TestCase):
     def test_its_real_size_on_its_footprint(self):
         spec = bld.landmark_spec(tower_ring(centre=(30.0, -20.0)), "eiffel")

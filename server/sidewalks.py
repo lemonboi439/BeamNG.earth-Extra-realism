@@ -61,7 +61,7 @@ def _normals_2d(xy):
         ml = np.hypot(m[:, 0], m[:, 1])
         ml[ml < 1e-9] = 1.0
         m = m / ml[:, None]
-        cos = np.clip((m * nseg[1:]).sum(1), 0.5, 1.0)          # miter at most 2x
+        cos = np.clip((m * nseg[1:]).sum(1), 0.35, 1.0)          # miter at most ~2.8x (smoother corner transitions)
         n[1:-1] = m / cos[:, None]
     return n
 
@@ -171,14 +171,14 @@ class Builder:
                             float(h), (bool(caps[0]), bool(caps[1])), int(slab)))
         self._built = None
 
-    def add_corner(self, arc, inward, outer, h=CURB_H, ramps=()):
+    def add_corner(self, arc, inward, outer, w=2.5, h=CURB_H, ramps=()):
         """A corner piece: the curb along the polyline arc (k, 3) (a curb return, with the straight
         runs and tapers of curb extensions; inward: unit vectors toward the sidewalk), the slab from
         the curb top to the outer corner points [(x, y, z) ...] (from the second sidewalk's end round
         to the first's), and the back faces along the outer edges. ramps: [(s0, s1)] arc lengths
         where the curb is lowered (the slab then slopes up from it toward the outer corner)."""
         self.pieces.append((1, np.asarray(arc, np.float64)[:, :3], np.asarray(inward, np.float64)[:, :2],
-                            np.asarray(outer, np.float64).reshape(-1, 3), list(ramps), 2.5, float(h), (False, False),
+                            np.asarray(outer, np.float64).reshape(-1, 3), list(ramps), float(w), float(h), (False, False),
                             1))
         self._built = None
 

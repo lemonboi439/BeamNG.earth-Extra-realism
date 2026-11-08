@@ -400,3 +400,39 @@ The user asked to clear the mod cache, load the saved London Home start and let 
   streaming at ~60 fps when the check ended; no further road-tile failures.
 - **Builds:** fixed `dist14\BeamNG.Earth-1.8.1-beta.exe` (tunnel + launcher fixes). The test itself runs the patched
   source server; the game stays connected at Theed Street.
+
+
+## 2026-11-06 — tunnels, roundabouts, DLR platforms, free brick, British heights, VRAM preset, preload
+
+The user: Rotherhithe and other tunnels still do not spawn; London DLR stations and major railway lines need fixing;
+optimise the game as a mod subsetting; add brick walls from a free texture; make building heights more realistic.
+
+- **Rotherhithe Tunnel (real cause).** The short-river-crossing exemption was 1,200 m, then 1,700 m; the real
+  Overture chain is **1,737 m**, so it was still classified as a long submerged tunnel and deleted. Raised to
+  2,000 m: a real-data check at 51.50,-0.05 now returns two Rotherhithe tunnel parts (previously none). The Burnley
+  3.2 km tunnel remains excluded.
+- **Roundabouts.** `roads._ring_groups` joins a roundabout's Overture segments by shared endpoints and gives the
+  whole ring one width (Rotherhithe's ring had segments of 1-3 lanes; each widened alone, it bulged/necked).
+  Test `test_one_roundabout_s_segments_take_one_width`.
+- **DLR / railway stations.** `railways._platforms` builds a concrete platform slab for each Overture
+  infrastructure `platform` polygon, its top `PLATFORM_H` 0.95 m over the nearest track's bed (not the street
+  below an elevated DLR station). Owners: the platform's centroid tile. Passed `infra_fn` from the road workers
+  and the server's geotile path. Station buildings already come from the buildings layer (`train_station`).
+- **Dropped kerbs / driveway dips.** Sidewalk runs cut at a driveway, forecourt or service access now get a
+  `sidewalks.RAMP_RUN` curb ramp at each cut end (the run's caps), so a car can enter over the pavement instead
+  of climbing a 15 cm curb. Corners and tile edges keep their existing treatment.
+- **Free brick wall texture.** `tools/import_brick_texture.py` imports ambientCG **Bricks075A 1K (CC0)**, converts
+  the Color/NormalGL/Roughness JPGs to BC7 DDS and `garden.materials.json` uses them for the mapped garden walls
+  (1.4 MB each, 4.2 MB total). CREDITS.md records the CC0 source.
+- **More realistic British building heights.** New `british` building style for Great Britain and Ireland: 80 %
+  brick, 2-storey terraces/houses, 3-storey high streets, 4 only on the tallest row, lower 3.0 m storeys, 36°
+  slate/tile roofs, 85 % attached. London no longer gets continent-style four-storey white blocks by default;
+  the style test pins London/Dublin and the 2-3 floors.
+- **VRAM / performance subsetting.** New `performance` quality preset (low trees/terrain, 960 m buildings/trees,
+  25 km view, no grass carpet, **1024² ground photo**), 4096² labelled 12 GB+ only and `extreme` lowered from
+  4096 to 2048. An 8 GB RTX 5060 ran out of VRAM after a long London drive with a custom 4096² photo; the mod
+  settings are now on Performance. The photo is 1/16 the memory of 4096².
+- **Faster London loads.** `tools/preload_city.py --bbox 51.45,-0.20,51.56,0.05 --bake --name london` warms the
+  raw Overture/OSM/DEM cache and writes `<cache>/bake/london.bnge`; the server reads it before planning, so a
+  first visit skips the expensive plan/fact pass. Run it with the game closed.
+- Tests green: test_roads 118, test_buildings 106, test_railways 51, test_tunnels 33, test_own_assets 4.

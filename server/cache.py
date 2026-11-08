@@ -62,6 +62,25 @@ INDEX_HEADER = "# beamng-earth cache index 1"
 # left out of the count and of "Clear cache"): a missing file of theirs is a miss, made again; their own limits stay
 MANAGED = ("dem", "imagery", "colormatch", "deshadow", "mapdata", "revisit", "seacarve", "roadwidth", "peercache",
            "raw", "plans", "roadz", "vegetation", "pagesdata", "decoded", "mapterhorn")
+# The download cache by what it is for: the settings page counts and clears each on its own (the user, 2026-11-08:
+# "split the caching ... have the tiles caching, then have the props / textures separate"). Every managed file is in
+# exactly one; gravity/, airports/ and the rest are "other" and are never cleared.
+CATEGORIES = {
+    "tiles": ("revisit/", "plans/", "roadwidth/", "pagesdata/", "peercache/", "roadz/", "seacarve/"),
+    "props": ("vegetation/", "mapdata/", "mapdata-mirror/"),
+    "textures": ("imagery/", "mapterhorn/", "colormatch/", "deshadow/", "decoded/"),
+}
+CATEGORY_NAMES = ("tiles", "props", "textures", "other")
+
+
+def category_of(key):
+    """The category of a tracked cache file (a key: its path under the cache root)."""
+    if key.startswith("revisit/fartex/"):
+        return "textures"
+    for cat, prefixes in CATEGORIES.items():
+        if key.startswith(prefixes):
+            return cat
+    return "other"
 CLEAR_KEEP_S = 600.0        # "Clear cache" keeps the files used this recently (the place around the player now)
 MIRRORED = ("mapdata-mirror",)      # counted and cleared, never evicted file by file (a cell's files and its "ok" go
                                     # together: mapdata prunes it whole, MIRROR_MB)
@@ -528,18 +547,21 @@ class Cache(NoCache):
                 self.on_change(key, False)
             return e[0] or 0
 
-    def clear(self, wait=60.0):
+    def clear(self, wait=60.0, category=None):
         """"Clear cache": every MANAGED (and MIRRORED) file but the ones used within CLEAR_KEEP_S (the place around the
         player; a file still in a producer's memory is fetched or built again if it is needed after all; gravity/,
-        airports/ and netstats/ stay). Waits up to `wait` s for the start-up walk. Returns
-        (files, bytes)."""
+        airports/ and netstats/ stay). category: only that category (CATEGORIES). Waits up to `wait` s for the start-up
+        walk. Returns (files, bytes)."""
+        if category is not None and category not in CATEGORY_NAMES:
+            raise ValueError(f"cache category {category!r}")
         if not self.managed or not self._ready_ev.wait(wait):
             return 0, 0
         # (only the last CLEAR_KEEP_S: everything this session had used stayed, and after a long drive "Clear cache"
         # cleared nearly nothing, a player 2026-11-03)
         floor = self.now() - CLEAR_KEEP_S
         with self._lock:
-            keys = [k for k, e in self._entries.items() if e[1] < floor and k.split("/", 1)[0] in MANAGED + MIRRORED]
+            keys = [k for k, e in self._entries.items() if e[1] < floor and k.split("/", 1)[0] in MANAGED + MIRRORED
+                    and (category is None or category_of(k) == category)]
         keys = self._unpinned(keys, lambda k: k)
         n = b = 0
         for key in keys:
@@ -548,8 +570,8 @@ class Cache(NoCache):
                 n, b = n + 1, b + got
         self.stats["cleared"] += n
         self.stats["cleared_bytes"] += b
-        log.info("cache: cleared %d files (%s); %s left (this session's and the gravity model)", n, _gb(b),
-                 _gb(self._used))
+        log.info("cache: cleared %d files (%s)%s; %s left (this session's and the gravity model)", n, _gb(b),
+                 f" from {category}" if category else "", _gb(self._used))
         self.save()
         return n, b
 
@@ -560,13 +582,27 @@ class Cache(NoCache):
         two reads of a moment apart are good enough for the page."""
         return self._used, len(self._entries)
 
-    def message(self, cleared=None):
-        """The `cache` message for the mod's settings page (cleared: bytes freed by a clear)."""
+    def usage_categories(self):
+        """{category: (bytes, files)} tracked now (the settings page's separate cache rows)."""
+        out = {c: [0, 0] for c in CATEGORY_NAMES}
+        for key, e in self._entries.items():
+            if e[0] is None:
+                continue
+            row = out[category_of(key)]
+            row[0] += e[0]
+            row[1] += 1
+        return {c: (v[0], v[1]) for c, v in out.items()}
+
+    def message(self, cleared=None, cleared_category=None):
+        """The `cache` message for the mod's settings page (cleared: bytes freed by a clear; cleared_category: which)."""
         used, files = self.usage()
         m = {"type": "cache", "v": MSG_VERSION, "usedBytes": int(used), "capBytes": int(self._cap),
-             "files": files, "ready": self.ready, "managed": self.managed}
+             "files": files, "ready": self.ready, "managed": self.managed,
+             "categories": {c: {"bytes": int(b), "files": n} for c, (b, n) in self.usage_categories().items()}}
         if cleared is not None:
             m["clearedBytes"] = int(cleared)
+            if cleared_category is not None:
+                m["clearedCategory"] = cleared_category
         if self.pinned_bytes is not None:
             m["pinnedBytes"] = int(self.pinned_bytes)
         return m

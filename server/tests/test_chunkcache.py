@@ -32,9 +32,12 @@ class ChunkCacheTest(unittest.TestCase):
     def test_equal_to_full_build(self):
         cache = heightmap.ChunkCache()
         for c in [(0.0, 0.0), (0.0, 128.0), (128.0, 256.0), (-384.0, 1024.0)]:
+            self.calls.clear()
             got, _ = heightmap.grid_u_chunked(self.frame, self.elev, *c, 1024, cache)
             want = heightmap.grid_u(self.frame, elev, *c, 1024)
             self.assertTrue(np.array_equal(got, want), c)
+            if c == (0.0, 0.0):
+                self.assertLessEqual(max(self.calls), heightmap.CHUNK * heightmap.CHUNK)
 
     def test_moved_block_computes_new_chunks_only(self):
         cache = heightmap.ChunkCache()

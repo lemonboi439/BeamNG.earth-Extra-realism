@@ -123,6 +123,11 @@ M.SCHEMA = {
   -- after a teleport the server on every CPU core and the game on two, until the new place is loaded (server
   -- cpupin.full_split, read at each teleport; the user, 2026-10-31)
   teleportPriority = { kind = 'bool', default = false, label = 'Full priority loading (joining, teleports)' },
+  -- what the server builds first (server earthd.Connection.priority_defers; sent with the graphics knobs): 'all' (the
+  -- default: everything nearest first), 'roads' / 'rails' (the road tiles, rails and tunnels inside them, before the far
+  -- terrain, trees and buildings; 'rails' also holds the signs, AI graph and distant traffic) or 'terrain' (the ground and
+  -- far field before the roads)
+  loadPriority = { kind = 'enum', default = 'all', values = { 'all', 'roads', 'rails', 'terrain' }, label = 'Load first' },
   -- the GPS route's data fetched ahead (the server's route_download; sent with each route): none, the next 12 miles
   -- (20 km), or the whole route (up to 300 miles)
   routeDownload = { kind = 'enum', default = 'ahead', values = { 'off', 'ahead', 'route' },
@@ -142,7 +147,7 @@ M.ORDER = { 'quality', 'framePacing', 'terrainDetail', 'groundPhoto', 'trees', '
   'dashboardSatellite',
   'hudVisible', 'statusBar', 'profilerMode', 'runtimeProfiler',
   'placeNamesOnline', 'creditsVisible', 'beammpOnLaunch',
-  'creditsCorner', 'creditsSize', 'cacheCapGb', 'routeDownload', 'serverCores', 'serverPriority', 'teleportPriority', 'devOutlineKm',
+  'creditsCorner', 'creditsSize', 'cacheCapGb', 'routeDownload', 'serverCores', 'serverPriority', 'teleportPriority', 'loadPriority', 'devOutlineKm',
   'devMapKm' }
 
 -- Stored but not on the settings page
@@ -381,6 +386,19 @@ function M.cacheLine(c)
   return used .. ' of ' .. size(c.capBytes, true) .. ', ' .. files .. kept
 end
 
+-- The separate caches' sizes for the Storage page (server cache.py CATEGORIES): tiles (road/rail/far geometry),
+-- props (foliage and the map data the props come from) and textures (imagery and its colour fixes).
+M.CACHE_CATEGORIES = { tiles = 'Tiles', props = 'Props', textures = 'Textures' }
+function M.cacheCategoryLine(c)
+  if type(c) ~= 'table' or type(c.categories) ~= 'table' then return '' end
+  local parts = {}
+  for _, id in ipairs({ 'tiles', 'props', 'textures' }) do
+    local v = c.categories[id]
+    if type(v) == 'table' then parts[#parts + 1] = M.CACHE_CATEGORIES[id] .. ' ' .. size(v.bytes or 0) end
+  end
+  return table.concat(parts, ' · ')
+end
+
 function M.getAll()
   local t = {}
   for k, v in pairs(values) do t[k] = v end
@@ -430,6 +448,7 @@ function M.serverGraphics()
     photoPx = okR and terrain.photoSize and terrain.photoSize() or tonumber(values.groundPhoto),
     -- a fixed view distance: the far field's radius at most (nothing past it is drawn); 0 = the real horizon
     viewM = values.viewDistanceMode == 'fixed' and values.viewDistanceKm * 1000 or 0,
+    loadPriority = values.loadPriority or 'all',
   }
 end
 
@@ -477,6 +496,7 @@ M.APPLY = {
     sendGraphics()          -- (the server's tree tiles reach as far)
   end,
   terrainDetail = sendGraphics,
+  loadPriority = sendGraphics,
   buildingDistance = sendGraphics,
   groundPhoto = function(v)
     require('beamngEarth/terrain').setPhotoSize(tonumber(v))
@@ -624,7 +644,9 @@ function M.uiState()
   if core and core.cacheQuery and cachePolls % M.CACHE_POLL == 1 then core.cacheQuery() end
   local c = core and core.cacheState and core.cacheState() or nil
   status.cache = { line = M.cacheLine(c), clears = c and c.clears or 0, clearedBytes = c and c.clearedBytes or nil,
-    clearedText = c and c.clearedBytes and size(c.clearedBytes) or nil }
+    clearedText = c and c.clearedBytes and size(c.clearedBytes) or nil,
+    categoriesLine = M.cacheCategoryLine(c), categories = c and c.categories or nil,
+    clearedCategory = c and c.clearedCategory or nil }
   -- the cache folder and the BeamMP launcher (the server's app_paths), asked with the cache numbers
   if core and core.appPath and cachePolls % M.CACHE_POLL == 1 then core.appPath() end
   status.paths = core and core.appPathState and core.appPathState() or nil
@@ -650,10 +672,13 @@ end
 
 -- "Clear cache" (the page asked for confirmation): the server removes every download but this
 -- session's and the gravity model; its answer (core.cacheState().clears + 1) carries the bytes freed.
-function M.uiCacheClear()
+function M.uiCacheClear(what)
   local core = ext('beamngEarth_core')
   if not (core and core.cacheClear) then return { ok = false, error = 'mod not loaded' } end
-  local sent, why = core.cacheClear()
+  if what ~= nil and what ~= '' and not M.CACHE_CATEGORIES[what] then
+    return { ok = false, error = 'unknown cache category' }
+  end
+  local sent, why = core.cacheClear(what)
   if not sent then return { ok = false, error = why or 'server not connected' } end
   return { ok = true }
 end

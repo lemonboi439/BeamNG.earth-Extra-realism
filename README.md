@@ -4,6 +4,44 @@ A 1:1 scale, streamed Earth for [BeamNG.drive](https://www.beamng.com/): drive a
 planet on real elevation data and satellite imagery, with distance-based level of detail and the
 real curvature of the Earth.
 
+> **This repository is the “Extra realism” fork:** [github.com/lemonboi439/BeamNG.earth-Extra-realism](https://github.com/lemonboi439/BeamNG.earth-Extra-realism).
+> It keeps upstream BeamNG.Earth's MIT licence and credits (© TecnaGamer) and adds the road,
+> pavement, crossing, tunnel, station, rail-turnout, street-prop, cache-splitting and loading-order
+> work described in [Extra realism (this fork)](#extra-realism-this-fork). The upstream project and
+> its own support channels live at [github.com/TecnaGamer/BeamNG.Earth](https://github.com/TecnaGamer/BeamNG.Earth).
+
+## Extra realism (this fork)
+
+- **UK road paint:** white turn arrows are painted as their own white geometry; no decal-sheet black
+  square. Lane strips, edge lines and double yellows follow the mapped class and width.
+- **Mapped pavements:** OpenStreetMap/Overture footways are raised sidewalks with curbs, cut out of
+  every carriageway, joined at corners, and given zebra bars where a `footway=crossing` way crosses
+  a road. Footways that cross the carriageway no longer become a slab in the road, and paths angled
+  into forecourts are left to the ground photo.
+- **Tunnels:** river/sea water is hidden on a tunnel's approach as well as inside it, so tunnel
+  mouths no longer read as flooded; rail tunnels crossing at one depth are staggered so one bore
+  passes under the other instead of clipping through it.
+- **Stations:** a building with a rail line running through it (a station shed such as St Pancras')
+  is left out instead of extruded solid, exposing the platforms and the station interior.
+- **Rail:** a branch track that merges into a through track is rounded into a turnout instead of
+  ending at a kink. (This is continuous drivable track, not yet NRails' selectable switch-collision
+  network.)
+- **Street props:** manhole covers, gully grates, speed cameras and low UK 75 mm flat-top speed
+  humps (white ramp triangles, three widths matched to the carriageway).
+- **Street lights and trees:** lights follow the local development sample (no lamp on a bare verge
+  unless OSM says `lit=yes`), UK streets use lamp posts rather than wooden pole lamps, and primary
+  roads get street trees. The default tree density and distance are raised.
+- **Loading and caching:** road tiles are built nearest-first with three road processes; the download
+  cache is split into **tiles**, **props/foliage** and **textures** buckets that are counted and can
+  be cleared independently on the Storage page.
+
+Status: the changes above are code-verified and unit-tested; in-game validation is in progress.
+Known partial areas: pavement corner joins are short straight links rather than full mitred
+corners; switch routing is a merged route rather than selectable turnout collision; bridge
+clearance/geometry and full station platform access still need a focused pass. Performance of the
+new per-tile work is checked in the repository (switch detection and tunnel separation are the
+vectorised paths; a 40-track station throat is ~87 ms and a 12-bore tunnel junction ~62 ms).
+
 Status: beta (see VERSION). Tested on BeamNG.drive 0.40.4 on Linux (Vulkan) and 0.40.3 on the Steam Deck. See
 [docs/ROADMAP.md](docs/ROADMAP.md) for what is coming.
 
@@ -457,5 +495,7 @@ the game, what it is sent, and what you see while it does not answer (the status
 it affects).
 
 ## License
-Code: MIT, see [LICENSE](LICENSE). BeamNG.drive is a trademark of BeamNG GmbH; this is an unofficial
-fan project and contains no BeamNG assets.
+Code: MIT, see [LICENSE](LICENSE). This fork's changes are released under the same MIT licence as
+upstream BeamNG.Earth (© TecnaGamer); the original copyright and permission notice is kept in
+[LICENSE](LICENSE), and the data/tool credits in [CREDITS.md](CREDITS.md). BeamNG.drive is a
+trademark of BeamNG GmbH; this is an unofficial fan project and contains no BeamNG assets.

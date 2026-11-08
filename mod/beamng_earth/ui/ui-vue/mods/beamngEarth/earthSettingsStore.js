@@ -88,11 +88,15 @@ export const settingsSchema = [
     name: "Storage",
     items: [
       { id: "cacheUsage", type: "info", name: "Download cache", desc: "Elevation, imagery and map data kept on disk so places you visited load without downloading again: the space in use, the limit and the number of files." },
+      { id: "cacheCategories", type: "info", name: "Cache by type", desc: "The download cache split into tiles (road, rail and distant geometry), props (foliage and the map data props come from) and textures (imagery and its colour fixes). Each can be cleared on its own below." },
       { id: "cacheCapGb", type: "number", default: 20, min: 0, unit: "GB", name: "Cache size limit (GB)", desc: "The most the download cache may use, in GB: type a number and press Enter (0: no limit). Over the limit the files used longest ago are removed (never what this session used in the last hour), and pre-cached areas and routes are kept." },
       { id: "routeDownload", type: "select", default: "ahead", name: "Download along the GPS route", desc: "When you plan a GPS route, its elevation and road and building data are downloaded ahead in the background, so the drive loads faster. Ahead: the next 12 miles. Whole route: all of it (up to 300 miles). To keep a route for good, with its aerial photos, use Pre-cache route on the map's GPS box.",
         options: [ { label: "Off", value: "off" }, { label: "Ahead (12 miles)", value: "ahead" }, { label: "Whole route", value: "route" } ] },
       { id: "cacheDir", type: "path", what: "cache", name: "Cache folder", placeholder: "Folder for the download cache, or default", desc: "Where the download cache is kept, e.g. on another drive. Change... opens your system's folder window (it may open behind the game: Alt+Tab to it); or type or paste a folder below and press Use (default: .cache/beamng-earth in your home folder). Used from the next start of the app; move the old folder's contents there first to keep what is downloaded." },
       { id: "cacheClear", type: "action", name: "Clear cache", desc: "Deletes the downloaded elevation and imagery. What this session used and the gravity model stay. Places are downloaded again when you visit them." },
+      { id: "cacheClearTiles", type: "action", what: "tiles", name: "Clear tiles", desc: "Deletes only the built tiles (road, rail and distant geometry). The props, textures and elevation stay; the tiles are built again when you visit." },
+      { id: "cacheClearProps", type: "action", what: "props", name: "Clear props", desc: "Deletes only the props (foliage and the map data props come from). Tiles and textures stay; props are made again when you visit." },
+      { id: "cacheClearTextures", type: "action", what: "textures", name: "Clear textures", desc: "Deletes only the textures (imagery and its colour fixes). Tiles, props and elevation stay; textures are downloaded again when you visit." },
     ],
   },
   {
@@ -106,6 +110,15 @@ export const settingsSchema = [
         note: "Takes effect the next time you start BeamNG.Earth.",
         options: [ { label: "Low", value: "low" }, { label: "Normal", value: "normal" } ] },
       { id: "teleportPriority", type: "bool", default: false, name: "Full priority loading", desc: "When you join the world and after a teleport, the app builds the place on every CPU core and the game keeps only two, until the place around you has finished loading. The new place loads much faster; the game runs at a lower frame rate meanwhile. Takes effect at your next teleport or the next time you join." },
+    ],
+  },
+  {
+    name: "Loading",
+    intro: "Choose what the world loads first around you. The rest follows once that part is in (or after two minutes at most, so nothing is held back for good). Applies at once.",
+    items: [
+      { id: "loadPriority", type: "select", default: "all", name: "Load first", desc: "All: everything loads together, nearest first (the default). Roads or Train tracks / tunnels: the road tiles load before the distant terrain, trees, buildings, traffic and turbines. Rails and tunnels are built inside the road tiles, so these two load exactly the same tiles. Terrain: the ground, distant terrain and horizon load before roads. The ground under your car always loads first, whatever you pick.",
+        note: "Rails and tunnels share their tiles with the roads, so Roads and Train tracks / tunnels behave the same.",
+        options: [ { label: "All", value: "all" }, { label: "Roads", value: "roads" }, { label: "Train tracks / tunnels", value: "rails" }, { label: "Terrain", value: "terrain" } ] },
     ],
   },
   {
@@ -156,7 +169,7 @@ export const settingsSchema = [
 
 // Each page's icon (the pause menu's side buttons take the icon's name, LayoutMenu's tabs the icon) and its button id
 // (the first keeps the old Mods-tab button's id: settings.lua M.BUTTON_ID, pageExists)
-export const PAGE_ICONS = { Graphics: "eyeOutlineOpened", World: "globe", Interface: "cogOutline",
+export const PAGE_ICONS = { Graphics: "eyeOutlineOpened", World: "globe", Interface: "cogOutline", Loading: "cogOutline",
   Multiplayer: "peopleOutline", Storage: "floppyDisk", Feedback: "bug", About: "info", Developer: "code" }
 export const pageId = (name, i) => i === 0 ? "beamngEarth-settings" : "beamngEarth-settings-" + name.toLowerCase()
 
@@ -182,8 +195,11 @@ export const status = ref({})
 export const dev = ref({ on: {}, lastPreset: "lod", active: false })
 export const help = ref(null)          // the setting pointed at (the side card's help)
 export const cacheConfirm = ref(false) // Clear cache: the confirmation is showing
+export const cacheClearWhat = ref("")  // ... of this category ("" = all)
 export const cacheBusy = ref(false)    // Clear cache: sent, waiting for the server's answer
+export const cacheBusyWhat = ref("")   // ... for this category
 export const cacheResult = ref("")     // "Freed 1.2 GB" / an error
+export const cacheResultWhat = ref("") // ... of this category
 let cacheClearsAt = 0                  // status.cache.clears when the clear was sent
 let cacheSentAt = 0
 let lastWriteAt = 0 // a poll answered just after a uiSet may carry the value from before it
@@ -252,6 +268,7 @@ export function infoValue(item) {
   if (item.id === "weather") return s.weather || "-"
   if (item.id === "gravity") return s.gravity || "-"
   if (item.id === "cacheUsage") return (s.cache && s.cache.line) || "-"
+  if (item.id === "cacheCategories") return (s.cache && s.cache.categoriesLine) || "-"
   return ""
 }
 
@@ -285,9 +302,11 @@ export function applyState(state) {
   if (cacheBusy.value && c && c.clears > cacheClearsAt) { // the server's answer to our clear
     cacheBusy.value = false
     cacheResult.value = `Freed ${c.clearedText || "0 MB"}`
+    cacheResultWhat.value = (c.clearedCategory || cacheBusyWhat.value || "")
   } else if (cacheBusy.value && Date.now() - cacheSentAt > 120000) { // a server without the cache, or gone
     cacheBusy.value = false
     cacheResult.value = "No answer from the server"
+    cacheResultWhat.value = cacheBusyWhat.value
   }
   const p = status.value.paths
   if (pathBusy.value && p && p.answers > pathAnswers && p.result) { // the server's answer to our choice
@@ -382,18 +401,28 @@ export function applyDevPreset(name) {
   })
 }
 
-// Clear cache: the button asks first (cacheConfirm), Clear sends it; the poll sees the answer
-export function askClearCache() {
+// Clear cache: the button asks first (cacheConfirm), Clear sends it; the poll sees the answer. what: one of
+// tiles / props / textures (the server's separate caches), or "" for all.
+export function askClearCache(what = "") {
   cacheResult.value = ""
+  cacheClearWhat.value = what
   cacheConfirm.value = true
 }
 
 export function confirmClearCache() {
   cacheConfirm.value = false
   cacheClearsAt = (status.value.cache && status.value.cache.clears) || 0
-  engineLua("beamngEarth_settings and beamngEarth_settings.uiCacheClear() or nil", res => {
-    if (res && res.ok) { cacheBusy.value = true; cacheSentAt = Date.now() }
-    else cacheResult.value = (res && res.error) || "mod not loaded"
+  const what = cacheClearWhat.value || ""
+  engineLua(`beamngEarth_settings and beamngEarth_settings.uiCacheClear(${JSON.stringify(what)}) or nil`, res => {
+    if (res && res.ok) {
+      cacheBusy.value = true
+      cacheBusyWhat.value = what
+      cacheResultWhat.value = what
+      cacheSentAt = Date.now()
+    } else {
+      cacheResult.value = (res && res.error) || "mod not loaded"
+      cacheResultWhat.value = what
+    }
   })
 }
 

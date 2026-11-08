@@ -2,7 +2,9 @@
 terrain block's holes at the portals."""
 import sys
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -118,6 +120,32 @@ class Mesh(unittest.TestCase):
     def test_no_tunnel_no_mesh(self):
         ch = roads._chunk(roads.DECK, 7.0, np.c_[line(0, 40), np.full(11, 5.0)])
         self.assertIsNone(roadmesh.tunnel([ch], (0.0, 0.0, 0.0)))
+
+    def test_portal_wings_flank_the_approach(self):
+        # the map has the tunnel, not the walls beside its mouth: a low wing wall runs out along the approach on
+        # each side of a full portal (Rotherhithe's brick approach walls, 2026-11-07)
+        ch = roads._chunk({**roads.TUNNEL, "deck": True, "tunnel": True}, 7.0, np.c_[line(0, 40), np.full(11, 5.0)])
+        ch.update(fixed=True, deck=True, tunnel=True, portal=[True, False])
+        P, T, UV, mats, M = roadmesh.tunnel([ch], (0.0, 0.0, 0.0))
+        wings = P[(P[:, 0] < -1.0) & (P[:, 0] > -roadmesh.PORTAL_WING_M - 2.0)]
+        self.assertGreater(len(wings), 0)
+        self.assertLessEqual(P[:, 0].min(), -roadmesh.PORTAL_WING_M + 0.5)     # 14 m out from the face
+        self.assertTrue((wings[:, 1] > 0.5).any() and (wings[:, 1] < -0.5).any())     # both sides
+        self.assertAlmostEqual(wings[:, 2].min(), 5.0 - roadmesh.PORTAL_WING_FOOT, places=3)
+        self.assertAlmostEqual(wings[:, 2].max(), 5.0 + roadmesh.PORTAL_WING_END_H, places=3)
+        # no wings under a park's stone arch (its stone top and face already close the mouth) ...
+        lch = roads._chunk({**roads.TUNNEL, "deck": True, "tunnel": True}, 7.0,
+                           np.c_[line(0, 40), np.full(11, 5.0)])
+        lch.update(fixed=True, deck=True, tunnel=True, portal=[True, False], tunnel_h=4.0)
+        P2 = roadmesh.tunnel([lch], (0.0, 0.0, 0.0))[0]
+        self.assertGreater(P2[:, 0].min(), -roadmesh.PORTAL_WING_M + 0.5)
+        # ... but a major road's low cut-and-cover box (Rotherhithe, concrete 5 m) gets them, up to its face's top
+        cch = roads._chunk({**roads.TUNNEL, "deck": True, "tunnel": True}, 7.0,
+                           np.c_[line(0, 40), np.full(11, 5.0)])
+        cch.update(fixed=True, deck=True, tunnel=True, portal=[True, False], tunnel_h=5.0, concrete=True)
+        P3 = roadmesh.tunnel([cch], (0.0, 0.0, 0.0))[0]
+        self.assertLessEqual(P3[:, 0].min(), -roadmesh.PORTAL_WING_M + 0.5)
+        self.assertAlmostEqual(P3[P3[:, 0] < -1.0][:, 2].max(), 5.0 + roadmesh.PORTAL_WING_END_H, places=3)
 
 
 class OpenUnderpass(unittest.TestCase):
@@ -468,6 +496,36 @@ class Underwater(unittest.TestCase):
         z = np.asarray(parts[0][3], np.float64)
         self.assertLess(float(np.nanmin(z)), 26.0, "the floor is laid under the water-covered ground")
         self.assertGreater(float(z[0]), 28.0, "the portal stays at the ground")
+
+    def test_rotherhithe_survives_tile_emission(self):
+        # Regression for the real path: classification -> shared chain profile -> clipped road/tube chunk.
+        from test_roads import features, FRAME, LON, M_LON
+        f = features([[(-740, 0), (740, 0)]], ["primary"], flags=[(0, "is_tunnel")], ids=["rotherhithe"])
+        def terrain(la, lo):
+            x = (np.asarray(lo) - LON) * M_LON
+            cover = np.minimum(80.0, np.minimum(x + 740.0, 740.0 - x))
+            return 30.0 + np.maximum(0.0, cover)
+        tp = roads.TunnelProfiles(FRAME, lambda key: f, terrain)
+        tp.wet = lambda la, lo: np.where(np.abs((np.asarray(lo) - LON) * M_LON) < 240, 6.0, 0.0)
+        chunks = roads._tunnel_chunks(tp, [f], (-800.0, -64.0, 800.0, 64.0))
+        tunnel = [c for c in chunks if c.get("tunnel") and c.get("deck")]
+        self.assertTrue(tunnel, "Rotherhithe must survive through tile tunnel emission")
+        self.assertTrue(any(c.get("portal", [False, False])[0] for c in tunnel))
+        self.assertTrue(any(c.get("portal", [False, False])[1] for c in tunnel))
+        self.assertTrue(all(c.get("fixed") for c in tunnel))
+        emitted = sum(float(np.hypot(*np.diff(np.asarray(c["n"], np.float64)[:, :2], axis=0).T).sum())
+                      for c in tunnel)
+        self.assertGreaterEqual(emitted, 1470.0)
+
+    def test_concurrent_tile_requests_share_one_profile_solve(self):
+        from test_roads import features, FRAME
+        f = features([[(-740, 0), (740, 0)]], ["primary"], flags=[(0, "is_tunnel")], ids=["rotherhithe"])
+        tp = roads.TunnelProfiles(FRAME, lambda key: f, lambda la, lo: np.full(np.shape(la), 30.0))
+        with mock.patch.object(tp, "_solve", wraps=tp._solve) as solve:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results = list(pool.map(lambda _: tp.parts([f], (-800.0, -64.0, 800.0, 64.0)), range(2)))
+        self.assertEqual(solve.call_count, 1)
+        self.assertEqual([len(x) for x in results], [len(results[0]), len(results[0])])
 
     def test_a_mountain_lake_far_over_a_deep_tunnel_is_no_river(self):
         # the Gotthard road tunnel: one pond ~900 m over it left all 17 km out (2026-10-28)

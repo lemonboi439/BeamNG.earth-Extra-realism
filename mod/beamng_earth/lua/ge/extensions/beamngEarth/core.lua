@@ -1288,10 +1288,13 @@ local function onMessage(msg)
     local prev = cacheInfo
     cacheInfo = { usedBytes = tonumber(msg.usedBytes) or 0, capBytes = tonumber(msg.capBytes) or 0,
       files = tonumber(msg.files) or 0, ready = msg.ready == true, managed = msg.managed ~= false,
-      clearedBytes = prev and prev.clearedBytes, clears = cacheClears, pinnedBytes = tonumber(msg.pinnedBytes) }
+      categories = type(msg.categories) == 'table' and msg.categories or (prev and prev.categories),
+      clearedBytes = prev and prev.clearedBytes, clears = cacheClears, pinnedBytes = tonumber(msg.pinnedBytes),
+      clearedCategory = prev and prev.clearedCategory }
     if msg.clearedBytes ~= nil then
       cacheClears = cacheClears + 1
       cacheInfo.clearedBytes, cacheInfo.clears = tonumber(msg.clearedBytes) or 0, cacheClears
+      cacheInfo.clearedCategory = msg.clearedCategory and tostring(msg.clearedCategory) or nil
     end
   end
 end
@@ -2722,11 +2725,15 @@ function M.cacheSetCap(gb)
   net.send({ type = 'cache', capGb = gb })
   return true
 end
-function M.cacheClear()
+function M.cacheClear(category)
   if not cacheReady() then return false, 'server not connected' end
   -- a server without a cache sends no 'cache' after hello and would never answer the clear
   if not cacheInfo then return false, 'the server has no download cache' end
-  net.send({ type = 'cache', clear = true })
+  if category ~= nil and category ~= '' and category ~= 'tiles' and category ~= 'props'
+      and category ~= 'textures' then
+    return false, 'unknown cache category'
+  end
+  net.send({ type = 'cache', clear = true, category = category ~= '' and category or nil })
   return true
 end
 function M.cacheQuery()
@@ -2922,11 +2929,11 @@ function M.sendGraphics()
   local settings = rawget(_G, 'beamngEarth_settings')
   local g = settings and settings.serverGraphics and settings.serverGraphics()
   if type(g) ~= 'table' or not net.isConnected() or not st.sessionId then return false end
-  local sig = string.format('%s/%s/%s/%s/%s', tostring(g.lodScale), tostring(g.treeScale), tostring(g.buildingScale),
-    tostring(g.photoPx), tostring(g.viewM))
+  local sig = string.format('%s/%s/%s/%s/%s/%s', tostring(g.lodScale), tostring(g.treeScale), tostring(g.buildingScale),
+    tostring(g.photoPx), tostring(g.viewM), tostring(g.loadPriority))
   if sig == M.graphicsSent then return false end
   net.send({ type = 'graphics', lodScale = g.lodScale, treeScale = g.treeScale, buildingScale = g.buildingScale,
-    photoPx = g.photoPx, viewM = g.viewM })
+    photoPx = g.photoPx, viewM = g.viewM, loadPriority = g.loadPriority })
   M.graphicsSent = sig
   return true
 end

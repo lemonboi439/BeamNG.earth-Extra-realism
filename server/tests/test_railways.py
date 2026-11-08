@@ -29,6 +29,29 @@ class RailwayTest(unittest.TestCase):
         self.assertGreater(railways.TUNNEL_BORE_W / 2 + roadmesh.TUNNEL_SHOULDER, 3.2,
                            "a 3.2 m train fits with clearance")
 
+    def test_a_branch_end_rounds_into_the_through_track(self):
+        main = features([[(-100.0, 0.0), (100.0, 0.0)]], ["standard_gauge"], subtypes=["rail"], ids=["main"])
+        branch = features([[(0.0, -8.0), (50.0, 0.0)]], ["standard_gauge"], subtypes=["rail"], ids=["branch"])
+        rails = railways.parts(FRAME, [main, branch], roads.tile_bbox(0, 0), clip=False)
+        got = {fid: xy for fid, _c, _k, xy in rails if fid in ("main", "branch")}
+        self.assertEqual(set(got), {"main", "branch"})
+        self.assertAlmostEqual(float(got["branch"][-1, 0]), 50.0, delta=0.5, msg="joined to the through track")
+        self.assertAlmostEqual(float(got["branch"][-1, 1]), 0.0, delta=0.5)
+        d = got["branch"][-1, :2] - got["branch"][-2, :2]
+        d /= max(float(np.hypot(*d)), 1e-9)
+        self.assertGreater(abs(float(d[0])), 0.995, "the switch leaves tangent to the through track")
+        np.testing.assert_allclose(got["main"][[0, -1]], main.xy_in(FRAME)[[0, -1]], atol=1e-6, rtol=0,
+                                   err_msg="the through track is untouched")
+
+    def test_crossing_tunnels_pass_over_and_under(self):
+        x = np.linspace(-100.0, 100.0, 101)
+        a = ("a", "standard_gauge", "tunnel", np.c_[x, np.zeros(101)])
+        b = ("b", "standard_gauge", "tunnel", np.c_[np.zeros(101), x])
+        z = railways.tunnel_floors([a, b], FRAME, lambda xy: np.full(len(xy), 10.0))
+        self.assertEqual(set(z), {0, 1})
+        self.assertGreater(abs(float(z[0][50] - z[1][50])), 6.0,
+                           "two bores at one depth clip; the lower now passes under the upper")
+
     def test_distant_bridge_of_a_nearby_feature_is_not_profiled(self):
         # One feature crosses the tile, but its last 100 m is a bridge 5 km away.
         f = features([[(-100.0, 100.0), (5000.0, 100.0), (5100.0, 100.0)]],
@@ -83,12 +106,48 @@ class RailwayTest(unittest.TestCase):
         z = np.concatenate([b for b, _g in railways.profile(parts, flat)])
         np.testing.assert_allclose(z, 10.0 + railways.VIADUCT_CLEAR_M, atol=1e-6)
 
-    def test_a_bridge_meeting_a_ground_track_keeps_its_own_profile(self):
-        f = features([[(-400.0, 100.0), (100.0, 100.0)], [(100.0, 100.0), (600.0, 100.0)]],
+    def test_a_short_bridge_meeting_a_ground_track_keeps_its_own_profile(self):
+        f = features([[(-100.0, 100.0), (-50.0, 100.0)], [(-50.0, 100.0), (500.0, 100.0)]],
                      ["standard_gauge"] * 2, subtypes=["rail"] * 2, flags=[(0, "is_bridge")])
         parts = railways.parts(FRAME, [f], roads.tile_bbox(0, 0), clip=True)
         z = np.concatenate([b for b, _g in railways.profile(parts, flat)])
-        np.testing.assert_allclose(z, 10.0, atol=1e-6, err_msg="a ground part anchors the bridge: no viaduct raise")
+        np.testing.assert_allclose(z, 10.0, atol=1e-6, err_msg="a short bridge keeps the ground track's profile")
+
+    def test_a_long_bridge_run_is_raised_even_at_a_ground_anchor(self):
+        # Abbey Street / London Bridge: long bridge-tagged runs connected to a ground track sat at street level
+        f = features([[(-500.0, 100.0), (100.0, 100.0)], [(100.0, 100.0), (400.0, 100.0)]],
+                     ["standard_gauge"] * 2, subtypes=["rail"] * 2, levels=[(0, 1.0)],
+                     flags=[(0, "is_bridge")])
+        levels = {}
+        parts = railways.parts(FRAME, [f], roads.tile_bbox(0, 0), clip=True, levels=levels)
+        prof = railways.profile(parts, flat, levels=levels)
+        br = [b for (fid, cls, kind, xy), (b, _g) in zip(parts, prof) if kind == "bridge"]
+        gr = [b for (fid, cls, kind, xy), (b, _g) in zip(parts, prof) if kind == "ground"]
+        np.testing.assert_allclose(np.concatenate(br), 10.0 + railways.VIADUCT_CLEAR_M, atol=1e-6)
+        np.testing.assert_allclose(np.concatenate(gr), 10.0, atol=1e-6)
+
+    def test_a_light_rail_viaduct_beside_a_ground_line_is_raised(self):
+        # the DLR at Limehouse: bridge=viaduct, layer 1, beside c2c track on the ground; it sat on the street
+        f = features([[(-500.0, 100.0), (100.0, 100.0)], [(100.0, 100.0), (400.0, 100.0)]],
+                     ["light_rail", "standard_gauge"], subtypes=["rail"] * 2,
+                     levels=[(0, 1.0), (1, 0.0)], flags=[(0, "is_bridge")])
+        parts = railways.parts(FRAME, [f], roads.tile_bbox(0, 0), clip=False)
+        prof = railways.profile(parts, flat)
+        lr = [b for (fid, cls, kind, xy), (b, _g) in zip(parts, prof) if cls == "light_rail"]
+        gr = [b for (fid, cls, kind, xy), (b, _g) in zip(parts, prof) if cls == "standard_gauge"]
+        np.testing.assert_allclose(np.concatenate(lr), 10.0 + railways.VIADUCT_CLEAR_M, atol=1e-6)
+        np.testing.assert_allclose(np.concatenate(gr), 10.0, atol=1e-6, err_msg="the ground track stays")
+
+    def test_a_flat_city_rail_tunnel_is_laid_below_the_ground(self):
+        # the Underground under a flat street: the lower hull was the street itself, so the tube stood at grade
+        f = features([[(-1200.0, 100.0), (1200.0, 100.0)]], ["standard_gauge"], subtypes=["rail"],
+                     levels=[(0, -4.0)], flags=[(0, "is_tunnel")])
+        levels = {}
+        parts = railways.parts(FRAME, [f], roads.tile_bbox(0, 0), clip=False, levels=levels)
+        self.assertEqual(levels.get(parts[0][0]), -4.0)
+        z = railways.tunnel_floors(parts, FRAME, flat, levels=levels)[0]
+        self.assertGreater(10.0 - float(np.median(z)), 10.0)
+        self.assertLessEqual(float(np.max(z)), 10.0 + 1e-6, "no track over the street")
 
     def test_parallel_bridge_decks_see_each_other(self):
         f = features([[(-200.0, 100.0), (200.0, 100.0)], [(-200.0, 104.0), (200.0, 104.0)]],
@@ -275,6 +334,20 @@ class RailwayTest(unittest.TestCase):
         self.assertEqual(len(z), 700)
         self.assertTrue(np.isfinite(z).all())
         self.assertLess(float(z[350]), -20.0)
+
+    def test_a_station_platform_is_a_slab_on_the_nearest_track(self):
+        f = features([[(0, 0), (24, 0), (24, 4), (0, 4), (0, 0)]], ["platform"])
+        f.attrs["class"] = np.array(["platform"], object)
+        rails = [("r", "light_rail", "ground", np.array([[0.0, 10.0], [44.0, 10.0]]))]
+        prof = [(np.array([10.0, 10.0]), None)]
+        mesh = railways._Mesh((0, 0, 0))
+        mi = mesh.mat(railways.CONCRETE)
+        railways._platforms(mesh, FRAME, (-50.0, -50.0, 60.0, 60.0), lambda key: f, rails, prof, mi)
+        out = mesh.result()
+        self.assertIsNotNone(out)
+        P = out[0]
+        self.assertGreater(len(P), 0)
+        self.assertAlmostEqual(float(P[:, 2].max()), 10.0 + railways.PLATFORM_H, delta=0.05)
 
     def test_osm_tunnel_tag_makes_a_tunnel_without_an_overture_flag(self):
         """The rail shard's tunnel=yes (the Channel Tunnel, the Overground dives) where Overture has no range."""
@@ -590,12 +663,15 @@ class RoadUnderpassTest(unittest.TestCase):
             if kind == "bridge":
                 self.assertGreaterEqual(float(z.min() + railways.BALLAST_H - railways.DECK_D),
                                         10 + railways.UNDERPASS_CLEAR_M - 0.5)
-        P, T, _uv, _mats, _M = railways.tile_mesh(FRAME, 0, 0, [f], flat)
-        # Check all vertices belonging to triangles over the actual lower lane,
-        # including ballast skirts, the concrete deck, and support piers.
+        P, T, _uv, mats, M = railways.tile_mesh(FRAME, 0, 0, [f], flat)
+        self.assertIn(railways.BRICK, mats, "a brick arch over the road")
+        # Check all vertices belonging to triangles over the actual lower lane, including ballast skirts, the
+        # concrete deck and support piers; the brick arch's curved soffit is meant to come down to the springing.
         tri = P[T]
         x = float(tunnels[0][0][:, 0].mean())
         over = (tri[:, :, 0].min(1) < x + 3) & (tri[:, :, 0].max(1) > x - 3)
+        if railways.BRICK in mats:
+            over &= M != mats.index(railways.BRICK)
         self.assertTrue(over.any())
         self.assertGreater(float(tri[over, :, 2].min()), 10 + railways.UNDERPASS_CLEAR_M - 0.1)
 

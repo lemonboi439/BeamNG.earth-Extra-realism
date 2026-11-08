@@ -21,6 +21,10 @@ SMALL_DEM_TILES = 192       # decoded 512² float32 DEM tiles (1 MB each)
 SMALL_WALL_CELLS = 12       # cells of building walls for the street widths (roadwidth.WALL_CELLS, 48)
 SMALL_MAPDATA_MB = 160      # decoded map data layers (mapdata.MEM_MB, 192): a road tile's cells still fit
 SMALL_ROAD_PROCESSES = 2    # road-tile processes (earthd ROAD_PROCESSES; with one the road tiles never caught up)
+MID_ROAD_PROCESSES = 3      # a 32 GB PC: the game and the system need the other 18 GB; 3 cut the road tiles round the
+                            # car from ~25 s to ~10 s after the terrain (the user, 2026-11-08: "roads need to load in
+                            # straight after terrain"), measured ~0.7 GB the process
+MID_FAR_WORKERS = 2
 # A desktop's road-tile processes by its threads and memory (each ~1-1.5 GB): driving off right after a teleport into
 # Manhattan at 50 mph, 2 had the road under the car for the first ~15 s and solid ~27 s after, 4 at ~6 s and ~15 s,
 # at the same frame rate (a 16-thread PC, 2026-10-25)
@@ -120,6 +124,7 @@ SMALL_FACTS_CELLS = 192         # roads._FACTS_MEM entries on a small machine (~
 FAR_WORKERS_DESKTOP = 3     # far-tile processes (earthd --workers' default) on a desktop
 LAYOUT_FIXED_PROCS = 5      # main + block request + block prefetch + photo + far building (earthd's pools)
 CACHE_RAM_SHARE = 0.20      # of the machine's RAM all server processes' caches together may hold
+CACHE_RAM_SHARE_MID = 0.12  # ... on a 32 GB PC with the game and the system in the other 18 GB (2026-11-08)
 DESKTOP_CACHE_MB = 1550.0   # the desktop per-process constants' sum: the scale's reference
 CACHE_MIN_MB = 224.0        # a process's cache budget at least this (whatever the machine)
 CACHE_MAX_MB = 1600.0       # ... and at most ~the desktop sizes (a 96 GB machine with 12 processes keeps them)
@@ -131,17 +136,28 @@ FLOORS_DESKTOP = {"dem": 256, "mapdata": 96, "walls": 24, "facts": 320, "fin": 8
                   "sea": 12, "img": 256, "combos": 16, "chunks": 256, "deshadow": 256, "plans": 16}
 
 
+def mid(gb=None):
+    """A 32 GB-class desktop (not the small profile): the game and Windows already fill half the RAM."""
+    gb = (total_gb() or 0.0) if gb is None else gb
+    return not small(gb) and gb < MID_GB
+
+
+def far_workers(gb=None):
+    gb = (total_gb() or 0.0) if gb is None else gb
+    return SMALL_FAR_WORKERS if small(gb) else (MID_FAR_WORKERS if mid(gb) else FAR_WORKERS_DESKTOP)
+
+
 def proc_count(cpus=None, gb=None):
     """The server processes of this machine's layout (earthd's pools): the road tiles (road_processes), the far
     tiles (--workers), and the five fixed ones (main, both block lanes, photo, far building)."""
-    return (road_processes(cpus, gb) + LAYOUT_FIXED_PROCS
-            + (SMALL_FAR_WORKERS if small(gb) else FAR_WORKERS_DESKTOP))
+    return road_processes(cpus, gb) + LAYOUT_FIXED_PROCS + far_workers(gb)
 
 
 def cache_mb(gb=None, cpus=None):
     """A process's cache budget in MB: CACHE_RAM_SHARE of the machine's RAM over its process count."""
     gb = total_gb() if gb is None else gb
-    per = (gb or 32.0) * 1000.0 * CACHE_RAM_SHARE / max(1, proc_count(cpus, gb))
+    share = CACHE_RAM_SHARE_MID if (not small(gb)) and (gb or 32.0) < MID_GB else CACHE_RAM_SHARE
+    per = (gb or 32.0) * 1000.0 * share / max(1, proc_count(cpus, gb))
     return min(CACHE_MAX_MB, max(CACHE_MIN_MB, per))
 
 
@@ -160,7 +176,7 @@ def apply(is_small=None):
     constants here, not from a previous call's)."""
     is_small = small() if is_small is None else is_small
     global SHED_MB
-    SHED_MB = SMALL_SHED_MB if is_small else 0
+    SHED_MB = SMALL_SHED_MB if is_small else (MID_SHED_MB if (total_gb() or 1e9) < MID_GB else 0)
     if os.environ.get("BNGE_SHED_MB"):              # (A/B: the ceiling in MB, 0 off)
         SHED_MB = int(os.environ["BNGE_SHED_MB"])
     s = cache_scale()
@@ -196,7 +212,7 @@ def apply(is_small=None):
     if os.environ.get("BNGE_DEM_MEM_TILES"):        # (A/B: decoded DEM tiles kept per process)
         import dem
         dem.MEM_TILES = int(os.environ["BNGE_DEM_MEM_TILES"])
-    else:
+    elif not is_small:
         imagery.MEM_FINISHED_MB = _scaled(160, F["fin"], s)  # the finished pyramid's JPEGs (~44 KB each)
     # every machine: a desktop's server held 13-17 GB in its eleven processes (1-1.5 GB a worker, mostly freed memory
     # its 40-65 threads' arenas kept), next to the game; a 32 GB PC with 4 cores swapped (GitHub #496, 2026-10-30)
@@ -222,6 +238,8 @@ _trimming = False
 # count entries, and the results kept on cached map features are counted nowhere. 0 = off (a desktop: apply()).
 SHED_MB = 0
 SMALL_SHED_MB = 1400     # (1200 on a Deck in Manhattan: two road workers dropped every ~15 s, 1206 -> 822 MB, their working set)
+MID_GB = 44.0            # a 32 GB PC (34.3 GB total) with the game and traffic: its 12 processes' caches filled the RAM
+MID_SHED_MB = 1000       # (tightened for a 32 GB PC sharing RAM with the game and Windows)
 SHED_MIN_S = 90.0        # a worker drops its caches at most this often (a dense city's working set comes straight back)
 _shedders = []
 shed_count = 0
@@ -483,5 +501,5 @@ def road_processes(cpus=None, gb=None):
     gb = (total_gb() or 0.0) if gb is None else gb
     for c, g, n in ROAD_PROCESSES_BY_CPU:
         if cpus >= c and gb >= g:
-            return n
+            return min(n, MID_ROAD_PROCESSES) if mid(gb) else n
     return SMALL_ROAD_PROCESSES

@@ -335,6 +335,31 @@ class ClearTest(Base):
         self.assertEqual(m["clearedBytes"], 3 * MB + 100)
         self.assertTrue(os.path.exists(os.path.join(self.root, cachemod.INDEX_FILE)), "saved after a clear")
 
+    def test_the_categories_are_counted_and_cleared_separately(self):
+        """The Storage page's separate caches: tiles, props and textures each count and clear on their own; the
+        elevation (dem/) is none of them and stays."""
+        old = T0 - 3 * DAY
+        for rel in ("revisit/roadsg/ab/abcd.zip", "plans/v1/ab/abcd.zip",
+                    "vegetation/v1/ab/abcd.bin", "mapdata/v2/buildings/14/1/0.npz",
+                    "imagery/usgs/16/1/0.jpg", "revisit/fartex/ab/abcd.dds", "dem/mapterhorn/12/1/0.webp"):
+            put(self.root, rel, MB, old)
+        c = self.make()
+        cats = c.usage_categories()
+        self.assertEqual((cats["tiles"], cats["props"], cats["textures"], cats["other"]),
+                         ((2 * MB, 2), (2 * MB, 2), (2 * MB, 2), (MB, 1)))
+        n, b = c.clear(category="props")
+        self.assertEqual((n, b), (2, 2 * MB))
+        self.assertFalse(exists(self.root, "vegetation/v1/ab/abcd.bin"))
+        self.assertFalse(exists(self.root, "mapdata/v2/buildings/14/1/0.npz"))
+        for rel in ("revisit/roadsg/ab/abcd.zip", "plans/v1/ab/abcd.zip", "imagery/usgs/16/1/0.jpg",
+                    "revisit/fartex/ab/abcd.dds", "dem/mapterhorn/12/1/0.webp"):
+            self.assertTrue(exists(self.root, rel), rel)
+        m = c.message(cleared=b, cleared_category="props")
+        self.assertEqual(m["clearedCategory"], "props")
+        self.assertEqual(m["categories"]["props"], {"bytes": 0, "files": 0})
+        with self.assertRaises(ValueError):
+            c.clear(category="everything")
+
     def test_built_caches_count_against_the_cap(self):
         """The app's built caches (revisit/, seacarve/, roadwidth/, peercache/) count, are evicted and cleared; the
         map data mirror counts and is cleared, never evicted file by file (a cell's files and its "ok" go together).
@@ -677,7 +702,11 @@ class ServerCacheTest(Base):
         cache_msgs = [m for m in msgs if m["type"] == "cache"]
         self.assertEqual([m["type"] for m in msgs[:2]], ["hello", "cache"], "the usage follows hello")
         self.assertEqual(cache_msgs[0], {"type": "cache", "v": 1, "usedBytes": 3 * MB, "capBytes": 20_000_000_000,
-                                         "files": 2, "ready": True, "managed": True})
+                                         "files": 2, "ready": True, "managed": True,
+                                         "categories": {"tiles": {"bytes": 0, "files": 0},
+                                                        "props": {"bytes": 0, "files": 0},
+                                                        "textures": {"bytes": MB, "files": 1},
+                                                        "other": {"bytes": 2 * MB, "files": 1}}})
         self.assertEqual(cache_msgs[1]["capBytes"], 5_000_000_000)
         self.assertEqual(len(cache_msgs), 4)
         self.assertEqual((cache_msgs[3]["clearedBytes"], cache_msgs[3]["usedBytes"]), (MB, 2 * MB))

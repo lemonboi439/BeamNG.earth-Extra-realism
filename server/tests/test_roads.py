@@ -59,6 +59,65 @@ def flat(lat, lon):
 
 
 
+class MappedFootwayTest(unittest.TestCase):
+    """Overture's mapped footways become pavements only beside a carriageway that has no sidewalk= tag for that side."""
+
+    def _road(self, sides=None):
+        sp = roads.Spec(6.0, "paved", True, "residential", False, 2.0, sides=sides)
+        pts = np.array([[-60.0, 0.0, 10.0], [60.0, 0.0, 10.0]])
+        return [(("r1"), sp, pts, LON)]
+
+    def test_footway_beside_a_road_is_a_pavement(self):
+        cells = [features([[(0.0, 5.0), (40.0, 5.0)]], ["footway"])]
+        runs, cross = roads.footway_runs(FRAME, cells, flat, self._road(), (-100.0, -100.0, 100.0, 100.0))
+        self.assertEqual((len(runs), cross), (1, []))
+        fid, pts, side, w = runs[0]
+        self.assertAlmostEqual(side, 1.0, msg="left of the road (+y here)")
+        self.assertAlmostEqual(w, roads.FOOTWAY_W_M)
+        self.assertGreater(float(np.median(pts[:, 1])), 3.5, "outside the carriageway")
+        self.assertTrue(np.allclose(pts[:, 2], 10.0, atol=0.01))
+
+    def test_a_footway_across_the_road_is_a_crossing_not_a_slab(self):
+        cells = [features([[(20.0, -6.0), (20.0, 6.0)]], ["footway"])]
+        runs, cross = roads.footway_runs(FRAME, cells, flat, self._road(), (-100.0, -100.0, 100.0, 100.0))
+        self.assertEqual(runs, [], "no pavement in the carriageway")
+        self.assertEqual(len(cross), 1)
+        _fid, q, yaw, rw, rz = cross[0]
+        self.assertAlmostEqual(float(q[0]), 20.0, delta=0.05)
+        self.assertAlmostEqual(float(q[1]), 0.0, delta=0.05, msg="snapped to the road's centre")
+        self.assertAlmostEqual(yaw, 0.0)
+        self.assertAlmostEqual(rw, 6.0)
+        self.assertAlmostEqual(rz, 10.0, places=2)
+
+    def test_two_footway_ends_close_by_are_joined_at_the_corner(self):
+        a = {"pts": np.array([[0.0, 5.0, 10.0], [10.0, 5.0, 10.0]]), "side": 1, "w": 2.0, "fid": "r1"}
+        b = {"pts": np.array([[12.0, 5.0, 10.0], [12.0, 15.0, 10.0]]), "side": 1, "w": 2.4, "fid": "r1"}
+        links = roads.footway_links([a, b], self._road())
+        self.assertEqual(len(links), 1, "the 2 m gap at the corner is filled")
+        self.assertEqual(links[0]["pts"].shape, (2, 3))
+        self.assertAlmostEqual(links[0]["w"], 2.0)
+
+    def test_no_corner_link_across_a_carriageway(self):
+        a = {"pts": np.array([[0.0, -4.0, 10.0], [10.0, -4.0, 10.0]]), "side": -1, "w": 2.0, "fid": "r1"}
+        b = {"pts": np.array([[10.0, 4.0, 10.0], [0.0, 4.0, 10.0]]), "side": 1, "w": 2.0, "fid": "r1"}
+        self.assertEqual(roads.footway_links([a, b], self._road()), [], "a road runs between them")
+
+    def test_no_double_sidewalk_where_the_road_tag_builds_one(self):
+        cells = [features([[(0.0, 5.0), (40.0, 5.0)]], ["footway"])]
+        self.assertEqual(roads.footway_runs(FRAME, cells, flat, self._road(sides=(1, -1)),
+                                            (-100.0, -100.0, 100.0, 100.0))[0], [])
+
+    def test_a_path_far_from_any_road_is_left_to_the_photo(self):
+        cells = [features([[(0.0, 40.0), (40.0, 40.0)]], ["footway"])]
+        self.assertEqual(roads.footway_runs(FRAME, cells, flat, self._road(),
+                                            (-100.0, -100.0, 100.0, 100.0))[0], [])
+
+    def test_mapped_width_is_kept(self):
+        cells = [features([[(0.0, 5.0), (40.0, 5.0)]], ["footway"], widths=[(0, 3.2)])]
+        runs, _cross = roads.footway_runs(FRAME, cells, flat, self._road(), (-100.0, -100.0, 100.0, 100.0))
+        self.assertAlmostEqual(runs[0][3], 3.2)
+
+
 class WalkLevelTest(unittest.TestCase):
     def test_sidewalk_stops_at_a_wall(self):
         """A sidewalk along y = 6 at the road's level 10 m: where the ground under it climbs a wall (x 30..50) it stops."""
@@ -130,6 +189,19 @@ class RulesTest(unittest.TestCase):
         self.assertFalse(roads.has_sidewalks(s[4]), "untagged residential: no invented sidewalk")
         rural = roads.road_specs(features([[(0, 0), (100, 0)]], ["residential"]))[0]
         self.assertFalse(roads.has_sidewalks(rural))                                     # untagged, rural: none
+
+    def test_explicit_sidewalk_sides_and_width_are_preserved(self):
+        f = features([[(0, 0), (100, 0)]] * 3, ["residential"] * 3)
+        f.attrs["osm_sidewalk"] = np.array(["", "", "no"], object)
+        f.attrs["osm_sidewalk_left"] = np.array(["yes", "", ""], object)
+        f.attrs["osm_sidewalk_right"] = np.array(["", "yes", ""], object)
+        f.attrs["osm_sidewalk_width"] = np.array([1.8, 2.4, np.nan], np.float64)
+        s = roads.road_specs(f, urban_fn=lambda lat, lon: np.ones(len(lat), bool))
+        self.assertEqual(roads.walk_sides(s[0]), (1,))
+        self.assertEqual(roads.walk_sides(s[1]), (-1,))
+        self.assertAlmostEqual(s[0].walk, 1.8)
+        self.assertAlmostEqual(s[1].walk, 2.4)
+        self.assertFalse(roads.has_sidewalks(s[2]))
 
     def test_limited_access_roads_get_no_sidewalks_in_a_built_up_cover(self):
         # a cloverleaf's ramps (few junctions) and a fast one-way primary beside a town's edge were drawn with
@@ -239,13 +311,12 @@ class UKFootwayAndLinesTest(unittest.TestCase):
         base.update(kw)
         return roads.Spec(**base)
 
-    def test_uk_footway_default(self):
+    def test_no_invented_uk_footway(self):
         sp = self.spec()
         self.assertFalse(roads.has_sidewalks(sp))
-        gb = roads.footway_default(sp, "GB")
-        self.assertEqual(gb.sides, (1, -1))
-        self.assertTrue(roads.has_sidewalks(gb))
-        self.assertIs(roads.footway_default(sp, "US"), sp)
+        self.assertIs(roads.footway_default(sp, "GB"), sp, "a street with no mapped sidewalk gets none")
+        mapped = sp._replace(sides=(1, -1))
+        self.assertTrue(roads.has_sidewalks(mapped))
         self.assertEqual(roads.footway_default(sp._replace(sides=()), "GB").sides, (),
                          "a mapped no-sidewalk / front-garden street keeps it")
 
@@ -253,17 +324,31 @@ class UKFootwayAndLinesTest(unittest.TestCase):
         sp = self.spec(sides=(1, -1))
         pts = np.c_[np.linspace(0.0, 50.0, 11), np.zeros(11), np.full(11, 10.0)]
         ex = roads.extras(sp, pts, -0.1, True, "GB")
-        yellow = [e for e in ex if e[0].get("m") == "line_yellow" and e[0].get("kind") == "edge"]
+        yellow = [e for e in ex if e[0].get("m") == "line_yellow" and e[0].get("kind") == "kerb"]
         self.assertEqual(len(yellow), 4)
         self.assertTrue(all(abs(e[1] - roads.KERB_YELLOW_W) < 1e-9 for e in yellow))
         self.assertEqual({e[0].get("side") for e in yellow}, {1, -1})
         offsets = sorted(round(abs(float(e[2][0, 1])), 3) for e in yellow)
-        self.assertAlmostEqual(offsets[0], 2.45, places=2)
-        self.assertAlmostEqual(offsets[1], 2.45, places=2)
-        self.assertAlmostEqual(offsets[2], 2.65, places=2)
-        self.assertAlmostEqual(offsets[3], 2.65, places=2)
+        self.assertAlmostEqual(offsets[0], 2.15, places=2)      # (the pair on the asphalt past the gutter)
+        self.assertAlmostEqual(offsets[1], 2.15, places=2)
+        self.assertAlmostEqual(offsets[2], 2.35, places=2)
+        self.assertAlmostEqual(offsets[3], 2.35, places=2)
         self.assertFalse([e for e in roads.extras(sp, pts, -0.1, True, "US")
-                          if e[0].get("m") == "line_yellow" and e[0].get("kind") == "edge"])
+                          if e[0].get("m") == "line_yellow" and e[0].get("kind") == "kerb"])
+
+    def test_kerb_line_types(self):
+        sp = self.spec(sides=(1, -1))
+        pts = np.c_[np.linspace(0.0, 50.0, 11), np.zeros(11), np.full(11, 10.0)]
+        red = [e for e in roads.extras(sp, pts, -0.1, True, "GB", kerb="double_red")
+               if e[0].get("kind") == "kerb"]
+        self.assertEqual(len(red), 4)
+        self.assertTrue(all(e[0]["m"] == "line_red" for e in red))
+        single = [e for e in roads.extras(sp, pts, -0.1, True, "GB", kerb="single_yellow")
+                  if e[0].get("kind") == "kerb"]
+        self.assertEqual(len(single), 2)
+        self.assertTrue(all(e[0]["m"] == "line_yellow" for e in single))
+        self.assertFalse([e for e in roads.extras(sp, pts, -0.1, True, "GB", kerb="none")
+                          if e[0].get("kind") == "kerb"])
 
 
 class RingTest(unittest.TestCase):
@@ -554,13 +639,18 @@ class BuildTileTest(unittest.TestCase):
         self.assertEqual(lane(two, {"lanes": "2"}), [], "too narrow for a centre line, as without the tag")
         self.assertTrue(lane(two._replace(width=6.2), {"lanes": "2"}))
 
-    def test_uk_residential_gets_footways_and_kerb_yellows(self):
+    def test_uk_residential_footways_come_from_the_map(self):
         f = features([[(-100, 50), (100, 50)]], ["residential"])
         walks = []
         chunks = roads.build_tile(FRAME, 0, 0, [f], flat, lambda la, lo: np.ones(np.shape(la), bool),
                                   walks=walks, country="GB")
-        self.assertTrue(walks, "an untagged UK residential street gets its footways")
-        self.assertIn("line_yellow", {c["m"] for c in chunks}, "and the kerbside double yellows")
+        self.assertFalse(walks, "an untagged residential street has no invented footway")
+        f.attrs["osm_sidewalk"] = np.array(["both"], object)
+        walks = []
+        chunks = roads.build_tile(FRAME, 0, 0, [f], flat, lambda la, lo: np.ones(np.shape(la), bool),
+                                  walks=walks, country="GB")
+        self.assertTrue(walks, "the mapped sidewalk gets its footways")
+        self.assertIn("line_yellow", {c["m"] for c in chunks}, "and the kerbside yellows")
 
     def test_city_street_sidewalks_and_lines_stop_at_crossings(self):
         f = features([[(-300, 100), (300, 100)], [(120, -100), (120, 300)]], ["secondary", "residential"])
@@ -2040,6 +2130,28 @@ class GravelTest(unittest.TestCase):
         from unittest import mock
         with mock.patch.object(roads, "REGIONAL_ON", False):
             self.assertEqual(roads.road_specs(self.roads(4, "gravel"))[-1].kind, "paved")
+
+
+class DrivewayCapTest(unittest.TestCase):
+    """A sidewalk's cut end at a crossing driveway (furniture.place stands a gate pier there)."""
+
+    def road(self, fid="drive", x=0.0, half=2.0):
+        return (fid, roads.Spec(half * 2, "paved", True, "service", False),
+                np.array([[x, -20.0, 0.0], [x, 20.0, 0.0]]), 0.0)
+
+    def test_at_a_crossing_carriageway(self):
+        r = self.road()
+        self.assertTrue(roads._cut_by_road(np.array([2.0, 0.0, 0.0]), "walk", [r]))
+        self.assertFalse(roads._cut_by_road(np.array([9.0, 0.0, 0.0]), "walk", [r]))
+        self.assertFalse(roads._cut_by_road(np.array([2.0, 0.0, 0.0]), "drive", [r]))    # its own road
+
+    def test_at_a_gas_station_drive(self):
+        cut = [(np.array([[0.0, -20.0], [0.0, 20.0]]), 3.0)]
+        self.assertTrue(roads._cut_by_road(np.array([4.0, 0.0, 0.0]), "walk", [], cut))
+        self.assertFalse(roads._cut_by_road(np.array([5.0, 0.0, 0.0]), "walk", [], cut))
+
+    def test_a_footway_s_own_end_is_no_driveway(self):
+        self.assertFalse(roads._cut_by_road(np.array([0.0, 0.0, 0.0]), "walk", []))
 
 
 if __name__ == "__main__":

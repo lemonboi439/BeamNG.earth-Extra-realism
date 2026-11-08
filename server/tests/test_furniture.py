@@ -104,6 +104,13 @@ class LampTest(unittest.TestCase):
         self.assertGreaterEqual(len(hy), 8)
         self.assertTrue(np.allclose(np.diff(hy), furniture.HYDRANT_SPACING / 2, atol=1.0), "alternating sides")
 
+    def test_uk_residential_bins_use_the_uk_spacing(self):
+        r = road("gb-bin", "residential", True, x0=-300, x1=1200)
+        rows = furniture.place([r], self.walks(r, 1), (0, 0, 1200, 256), country="GB")
+        bins = sorted(x[1] for x in rows if x[0] == furniture.G_BIN)
+        self.assertGreaterEqual(len(bins), 4)
+        self.assertTrue(np.allclose(np.diff(bins), furniture.GB_BIN_SPACING, atol=0.5))
+
 
 class DevelopmentDecorationTest(unittest.TestCase):
     OPTIONAL = {furniture.G_STREET_TREE, furniture.G_HYDRANT, furniture.G_BENCH, furniture.G_BIN}
@@ -118,23 +125,33 @@ class DevelopmentDecorationTest(unittest.TestCase):
     def optional(self, rows):
         return sorted(tuple(r) for r in rows if r[0] in self.OPTIONAL)
 
-    def test_rural_or_missing_context_keeps_exact_lighting_and_wires(self):
+    def test_rural_context_turns_lamps_off_but_keeps_wires_and_poles(self):
+        """Street lights follow the area's development (the user, 2026-11-08: "street lights need to be based on
+        area"): a tier-0 side (a verge, a park edge) gets no lamp unless OSM says lit=yes; wooden poles and their
+        wires are infrastructure, not lighting, and stay. The decoration stays off too."""
         r, walks = self.street()
+        lamps = {furniture.G_LAMP, furniture.G_POLELAMP, furniture.G_LENS, furniture.G_GLOW}
         for town, buried in ((False, 0.), (True, 0.), (True, 1.)):
             for lit in (None, "yes", "no"):
                 settings = dict(town=town, buried=buried, region="na:sparse", lighting={r[0]: lit})
                 rich_wires = []
                 rich = furniture.place([r], walks, (0, 0, 512, 256), wires=rich_wires,
                                        development=ConstantDevelopment(), **settings)
-                infrastructure = [row for row in rich if row[0] not in self.OPTIONAL]
-                # (None: no context given or readable, the old town rule: tested below)
                 for context in (ConstantDevelopment(tier=0),):
                     with self.subTest(town=town, buried=buried, lit=lit, context=context):
                         wires = []
                         rows = furniture.place([r], walks, (0, 0, 512, 256), wires=wires,
                                                development=context, **settings)
                         self.assertEqual(self.optional(rows), [])
-                        self.assertEqual(rows, infrastructure)
+                        sparse = [row for row in rows if row[0] not in lamps | self.OPTIONAL]
+                        base = [row for row in rich if row[0] not in lamps | self.OPTIONAL]
+                        self.assertEqual(sparse, base, "poles, wires, signs: unchanged")
+                        if lit == "yes":
+                            self.assertEqual([row for row in rows if row[0] in lamps],
+                                             [row for row in rich if row[0] in lamps], "mapped lighting wins")
+                        else:
+                            self.assertEqual([row for row in rows if row[0] in lamps], [],
+                                             "no lamp on a verge / park side")
                         self.assertEqual(len(wires), len(rich_wires))
                         for actual, expected in zip(wires, rich_wires):
                             np.testing.assert_array_equal(actual, expected)
@@ -569,3 +586,28 @@ class StreetTreesOffBuildings(unittest.TestCase):
         out = furniture.off_buildings(rows, [house.ring + [100.0, 200.0]])
         self.assertEqual([(r[0], r[1], r[2]) for r in out],
                          [(furniture.G_STREET_TREE, 145.0, 205.0), (furniture.G_LAMP, 115.0, 215.0)])
+
+
+class DrivewayPierTest(unittest.TestCase):
+    """A brick pier at each side of a driveway's dropped kerb (roads._cut_by_road's walk caps)."""
+
+    def walks(self, r, side, drive):
+        fid, spec, pts, _ = r
+        line = roads.offset_polyline(pts, side * (spec.width / 2 + 1.25))
+        return [{"fid": fid, "pts": line, "side": side, "w": 2.5, "caps": (True, True), "drive": drive}]
+
+    def test_a_pier_each_side_of_the_mouth(self):
+        r = road("d", "residential", True)
+        for side in (1, -1):
+            rows = furniture.place([r], self.walks(r, side, (True, True)), (-400.0, -100.0, 700.0, 200.0))
+            piers = [x for x in rows if x[0] == furniture.G_GATE_PIER]
+            self.assertEqual(len(piers), 2)
+            for x in piers:
+                # behind the footway's back edge, not in the driveway's opening
+                self.assertGreater(abs(x[2] - 50.0), r[1].width / 2 + 1.25 + 1.25)
+                self.assertAlmostEqual(x[6], furniture.GATE_PIER_H, places=3)
+
+    def test_no_pier_at_a_plain_end(self):
+        r = road("e", "residential", True)
+        rows = furniture.place([r], self.walks(r, 1, (False, False)), (-400.0, -100.0, 700.0, 200.0))
+        self.assertEqual([x for x in rows if x[0] == furniture.G_GATE_PIER], [])

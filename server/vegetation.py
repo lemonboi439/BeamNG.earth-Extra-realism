@@ -399,7 +399,7 @@ class Vegetation:
         # An orchard keeps its planted rows and loses the canopy's trees inside it.
         paved = np.zeros(h.shape, bool)
         orchard = np.zeros(h.shape, bool)
-        lu = None
+        lu = inf = None
         try:
             cl = self.md.cell((mapcells.ZOOM, x, y), layers=("land_use", "infrastructure"))
             lu, inf = cl.layers.get("land_use"), cl.layers.get("infrastructure")
@@ -417,7 +417,8 @@ class Vegetation:
         edge = self._edge(cd, lc, blocked | orchard, road, chm, hs)
         planted = orchard_items(lu, chm, blocked, (lon0, lat0, lon1, lat1))
         hedges = farm_foliage(lu, chm, blocked, (lon0, lat0, lon1, lat1))
-        return _concat(_concat(_concat(_concat(tree, scatter), edge), planted), hedges)
+        mapped_hedges = hedge_items(inf, chm, blocked, (lon0, lat0, lon1, lat1))
+        return _concat(_concat(_concat(_concat(_concat(tree, scatter), edge), planted), hedges), mapped_hedges)
 
     def _edge(self, cd, lc, blocked, road, chm, hs):
         """The thicket along forest edges beside roads (EDGE_*), outside the dry West."""
@@ -589,6 +590,8 @@ FARM_BUSH_ALONG = 6.0
 FARM_BUSH_POLY = 500
 FARM_BUSH_CELL = 2000
 FARM_MIN_M2 = 800.0
+HEDGE_ALONG_M = 2.5
+HEDGE_MAX_PER_CELL = 1200
 
 
 def _drop_on_mask(items, mask, chm):
@@ -714,6 +717,68 @@ def orchard_items(feats, chm, blocked, bounds=None):
     group = regional(group, height, lat, lon, np.full(len(lon), WC["crop"], np.uint8), u)
     return Items(lon, lat, height, (0.12 * height + 1.0).astype(np.float32),
                  np.full(len(lon), KIND_TREE, np.uint8), group, rank, yaw, np.ones(len(lon), np.float32))
+
+
+def hedge_items(feats, chm, blocked, bounds=None):
+    """Mapped hedge/tree-row lines, instanced through the shared shrub group and capped per cell."""
+    if feats is None or len(getattr(feats, "kind", ())) == 0:
+        return _empty()
+    cls = np.asarray(feats.attrs.get("class", [""] * len(feats))).astype(str)
+    subtype = np.asarray(feats.attrs.get("subtype", [""] * len(feats))).astype(str)
+    tags = np.asarray(feats.attrs.get("tags", [""] * len(feats))).astype(str)
+    selected = np.array([
+        any(token in " ".join((c, s, t)).lower()
+            for token in ("hedge", "tree_row", "barrier=hedge", "natural=tree_row"))
+        for c, s, t in zip(cls, subtype, tags)
+    ], bool)
+    lon0, lat0, lon1, lat1 = bounds if bounds is not None else (-180.0, -90.0, 180.0, 90.0)
+    ex0, ey0 = _to3857(lon0, lat0)
+    ex1, ey1 = _to3857(lon1, lat1)
+    ids = getattr(feats, "ids", None)
+    out = []
+    for i in np.flatnonzero(selected & (np.asarray(feats.kind) == 2)):
+        parts = feats.parts(int(i))
+        if not parts or parts[0] is None:
+            continue
+        line = np.asarray(parts[0][0] if np.asarray(parts[0]).ndim == 3 else parts[0], np.float64)
+        if line.ndim != 2 or len(line) < 2:
+            continue
+        x, y = _to3857(line[:, 0], line[:, 1])
+        distance = np.r_[0.0, np.cumsum(np.hypot(np.diff(x), np.diff(y)))]
+        if distance[-1] < HEDGE_ALONG_M:
+            continue
+        station = np.arange(0.0, distance[-1] + HEDGE_ALONG_M * 0.5, HEDGE_ALONG_M)
+        px = np.interp(station, distance, x)
+        py = np.interp(station, distance, y)
+        keep = (px >= ex0) & (px < ex1) & (py > ey0) & (py <= ey1)
+        px, py = px[keep], py[keep]
+        if not len(px):
+            continue
+        if blocked is not None and np.any(blocked) and chm is not None:
+            ci = np.floor((px - chm.x0) / chm.dx).astype(np.int64)
+            ri = np.floor((chm.y0 - py) / chm.dy).astype(np.int64)
+            valid = (ri >= 0) & (ri < blocked.shape[0]) & (ci >= 0) & (ci < blocked.shape[1])
+            keep = np.ones(len(px), bool)
+            keep[valid] = ~blocked[ri[valid], ci[valid]]
+            px, py = px[keep], py[keep]
+        if len(px):
+            fid = ids[i] if ids is not None else i
+            u = _hash01(np.full(len(px), np.uint64(_fid_key(fid))), np.arange(len(px), dtype=np.uint64), 61)
+            lon, lat = _to4326(px, py)
+            out.append((lon, lat, 1.4 + 0.9 * u, 0.08 + 0.12 * u))
+    if not out:
+        return _empty()
+    lon = np.concatenate([a[0] for a in out])
+    lat = np.concatenate([a[1] for a in out])
+    height = np.concatenate([a[2] for a in out]).astype(np.float32)
+    rank = np.concatenate([a[3] for a in out]).astype(np.float32)
+    yaw = np.zeros(len(lon), np.float32)
+    if len(lon) > HEDGE_MAX_PER_CELL:
+        keep = np.sort(np.argpartition(rank, HEDGE_MAX_PER_CELL - 1)[:HEDGE_MAX_PER_CELL])
+        lon, lat, height, rank, yaw = lon[keep], lat[keep], height[keep], rank[keep], yaw[keep]
+    return Items(lon, lat, height, (0.55 + 0.25 * height).astype(np.float32),
+                 np.full(len(lon), KIND_BUSH, np.uint8), np.full(len(lon), G_SHRUB, np.uint8),
+                 rank, yaw, np.ones(len(lon), np.float32))
 
 
 def farm_foliage(feats, chm, blocked, bounds=None):

@@ -220,11 +220,22 @@ class ArrowTest(unittest.TestCase):
         lt = [float(c[1]) for c, _, k in a if k == "left"]
         self.assertTrue(lt and all(abs(y) < 1e-6 for y in lt), "the left-turn lane next to the centre line")
 
-    def test_quad_uv_is_one_cell(self):
-        corners, uv = markings.arrow_quad(np.zeros(3), np.array([1.0, 0.0]), "right")
-        self.assertAlmostEqual(float(corners[0][0]), 2.0)
-        # the sheet's top row (the shape's V runs up from the bottom: 0.75 .. 1), the tip (corners 0, 1) at its top; the
-        # bottom row is the game 0.40 sheet's "EXIT" (it showed upside down where straight arrows belong, 2026-10-29)
-        self.assertEqual(uv.min(0).tolist(), [0.25, 0.75])
-        self.assertEqual(uv.max(0).tolist(), [0.5, 1.0])
-        self.assertEqual(uv[0][1], 1.0)
+    def test_arrow_is_white_convex_pieces(self):
+        centre = np.array([10.0, 2.0, 0.0])
+        for kind in ("through", "left", "right"):
+            parts = markings.arrow_parts(centre, np.array([1.0, 0.0]), kind)
+            self.assertEqual(len(parts), 2 if kind == "through" else 3, kind)
+            for q in parts:
+                self.assertEqual(q.shape[1], 3)
+                self.assertTrue(np.allclose(q[:, 2], 0.0), "road level")
+                # convex, counter-clockwise from above (roadmesh draws the fan facing up)
+                a = 0.5 * float(np.sum(q[:, 0] * np.roll(q[:, 1], -1) - np.roll(q[:, 0], -1) * q[:, 1]))
+                self.assertGreater(a, 1e-6, kind)
+                self.assertLessEqual(np.ptp(q[:, 0]), markings.ARROW_LEN_M + 1e-6)
+                self.assertLessEqual(np.ptp(q[:, 1]), markings.ARROW_LEN_M + 1e-6)
+            # the tip reaches ahead of the centre, the tail behind it
+            xs = np.concatenate([q[:, 0] for q in parts])
+            self.assertGreater(xs.max(), centre[0] + 0.2)
+            self.assertLess(xs.min(), centre[0] - 1.0)
+        turn = markings.arrow_parts(centre, np.array([1.0, 0.0]), "left")
+        self.assertGreater(max(float(q[:, 1].max()) for q in turn), centre[1] + 0.5, "bends to the lane side")

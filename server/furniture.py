@@ -522,8 +522,12 @@ SIGN_KMH = (30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150)
 
 
 G_HYDRANT, G_BENCH, G_BIN = "hydrant", "bench", "bin"
+G_GATE_PIER = "gatepier"        # a brick pier at each side of a driveway's dropped kerb (trees.lua, tools/build_garden_wall.py)
+PIER_OFF_M = 0.12               # m behind the footway's back edge ...
+PIER_SETBACK_M = 0.30           # ... and this far into the run from the driveway's kerb
+GATE_PIER_H = 1.11
 G_STREET_TREE = "deciduous"     # trees.lua's broadleaf group (the variant nearest each tree's height)
-STREET_TREE_CLASSES = {"residential", "tertiary", "secondary", "living_street"}
+STREET_TREE_CLASSES = {"residential", "tertiary", "secondary", "primary", "living_street"}
 STREET_TREE_SHARE = 0.5         # streets with a row of trees (hashed per street)
 STREET_TREE_SPACING = 11.0
 STREET_TREE_CURB_M = 0.9
@@ -585,6 +589,7 @@ POLE_LAMP_Z = 7.0           # m above the pole's base
 HYDRANT_SPACING = 120.0
 BENCH_SPACING = 140.0
 BIN_SPACING = 90.0
+GB_BIN_SPACING = 160.0          # a UK residential street's litter bin: sparser than a high street's, both footways
 BENCH_YAW = 90.0            # the bench model's front is its local +y (the yaw puts +x toward the road)
 
 # Conservative local boxes of the stock collision meshes, in metres at trees.lua's catalog height.
@@ -901,6 +906,29 @@ def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=Fals
 
     def overhead(fid):          # does this road's line run on poles (not buried)?
         return _h01(fid, "buried") >= buried
+
+    def _out(run, side):
+        d = np.asarray(run[-1, :2], np.float64) - np.asarray(run[0, :2], np.float64)
+        n = np.array([-d[1], d[0]]) / max(float(np.hypot(*d)), 1e-9)
+        return n * side
+
+    def area_lit(fid, run, side, half, offset=0.0):
+        """Street lights where the street's side is built up: OSM lit=yes always, lit=no never, else the development
+        sample at the run's middle (tier 0: a grass verge, a park edge, the approach embankment: no lamp). Without
+        development data the old urban rule stands. offset: the run's distance out from the road's centreline
+        (0 when the run is the centreline itself), so the context samples the same centre the decoration does."""
+        lit = lighting.get(fid)
+        if lit == "no":
+            return False
+        if lit == "yes" or development is None:
+            return True
+        out = _out(run, side)
+        q = np.asarray(run[len(run) // 2, :2], np.float64) - out * float(offset)
+        try:
+            ctx = development.sample(q, out, float(half))
+        except Exception:
+            return True
+        return ctx is None or ctx.tier > 0
     clearance = clearance if clearance is not None else RoadClearance(
         [(spec.width / 2, pts) for _, spec, pts, _ in roads], decks, bounds=box)
     rows = []
@@ -917,6 +945,25 @@ def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=Fals
             continue
         side = wk["side"]
         w = wk.get("w", 2.5)
+        drive = wk.get("drive") or (False, False)
+        if (drive[0] or drive[1]) and len(run) >= 2:
+            # the frontage wall's end at each driveway mouth: a brick gate pier (the map has the gap, not the pier)
+            for at, nb in ((0, 1), (-1, -2)):
+                if not drive[0 if at == 0 else 1]:
+                    continue
+                p_end = run[at]
+                t_in = run[nb, :2] - p_end[:2]       # into the run, away from the driveway
+                ln = float(np.hypot(*t_in))
+                if ln < 1e-9:
+                    continue
+                t_in /= ln
+                fwd = t_in if at == 0 else -t_in     # along the run's own direction
+                out_ = np.array([-fwd[1], fwd[0]]) * side      # away from the road (sidewalks.run_geometry)
+                q = p_end[:2] + out_ * (w / 2 + PIER_OFF_M) + t_in * PIER_SETBACK_M
+                row = [G_GATE_PIER, round(float(q[0]), 2), round(float(q[1]), 2), round(float(p_end[2]), 2),
+                       round(_yaw(fwd[0], fwd[1]), 1), 1.0, GATE_PIER_H, 0.0]
+                if _owns(box, q[0], q[1]) and clearance.clear(row):
+                    rows.append(row)
 
         def decorated(group, p, out, k):
             if development is None:             # (no context given: the old rule, town streets only)
@@ -949,7 +996,8 @@ def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=Fals
         rule = spacing_of.get(spec.cls)
         # (none along a mountain pass road: no line follows the Stelvio's hairpins, Mapillary 2026-10-31; nor the
         # country roads' below)
-        if town and spec.cls in TOWN_POLE_CLASSES and overhead(fid) and not getattr(spec, "mountain", False):
+        if town and spec.cls in TOWN_POLE_CLASSES and overhead(fid) and not getattr(spec, "mountain", False) \
+                and str(country or "").upper() not in ("GB", "IE"):
             # towns and suburbs: wooden utility poles along one side, wired, a cobra-head lamp on every other
             pole_side = 1 if _h01(fid, "side") < 0.5 else -1
             if side == pole_side:
@@ -970,13 +1018,14 @@ def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=Fals
                     if _owns(box, q[0], q[1]):
                         rows.append(pole)
                         k = int(round((float(_project(line, q[None])[0]) - ph) / TOWN_POLE_SPACING))
-                        if lighting.get(fid) != "no" and pole_lamp(spec.cls, k, region):
+                        if lighting.get(fid) != "no" and pole_lamp(spec.cls, k, region) \
+                                and area_lit(fid, run, side, spec.width / 2, spec.width / 2 + w / 2):
                             rows.append([G_POLELAMP, round(float(q[0]), 2), round(float(q[1]), 2),
                                          round(float(p[2]) + POLE_LAMP_Z, 2), round(yaw, 1), 1.0, 1.1, 0.0])
                 if wires is not None and len(run_poles) > 1:
                     wires.extend(_own_spans(run_poles, box))
             rule = None
-        if rule is not None and lighting.get(fid) != "no":
+        if rule is not None and area_lit(fid, run, side, spec.width / 2, spec.width / 2 + w / 2):
             spacing, both = rule
             lamp_side = 1 if _h01(fid, "side") < 0.5 else -1
             if both or side == lamp_side:
@@ -1020,18 +1069,18 @@ def place(roads, walks, box, curb_h=0.15, wires=None, town=False, left_hand=Fals
             continue
         # a street in built-up land (spec.urban: the land cover; the tile's `town` is only "not a dense core", true in
         # the countryside too) with no sidewalk run: lit from its edge; a country road: utility poles alone
+        side = 1 if _h01(fid, "pside") < 0.5 else -1
+        if spec.cls in HIGHWAY_CLASSES and spec.dir:    # a one-way carriageway: its outer edge (drivers' right)
+            side = int(spec.dir) if left_hand else -int(spec.dir)
         highway = spec.cls in HIGHWAY_CLASSES and (lighting.get(fid) == "yes"
                                                    or highway_lit(region, spec.link, spec.urban))
-        lamps = lighting.get(fid) != "no" and (highway or lighting.get(fid) == "yes"
-                                                or (spec.urban and spec.cls in TOWN_POLE_CLASSES))
+        lamps = lighting.get(fid) != "no" and area_lit(fid, line, side, spec.width / 2) \
+            and (highway or lighting.get(fid) == "yes" or (spec.urban and spec.cls in TOWN_POLE_CLASSES))
         highway = highway and lamps
         poles = not highway and overhead(fid) and (lamps or (not spec.urban and spec.cls in POLE_CLASSES)) \
             and not getattr(spec, "mountain", False)        # (a pass road's: none, as in town above)
         if not (lamps or poles):
             continue
-        side = 1 if _h01(fid, "pside") < 0.5 else -1
-        if highway and spec.dir:            # a one-way carriageway: its outer edge (the drivers' right, left-hand: left)
-            side = int(spec.dir) if left_hand else -int(spec.dir)
         if highway:
             spacing = (LINK_LAMP_SPACING if spec.link else HIGHWAY_LAMP_SPACING)["na" if _na(region) else None]
         else:

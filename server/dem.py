@@ -48,8 +48,9 @@ log = logging.getLogger("earthd.dem")
 
 TILE = 512                  # sampling grid tile size (Mapterhorn)
 MEM_TILES = 512             # decoded tiles kept per process (Dem's default; budget.py: fewer on a small machine)
-PROBE_WORKERS = 16          # Dem._ahead(): raw downloads started ahead of the walk down the zooms
-URGENT_WORKERS = 16         # Dem.urgent(): its own fetch threads (with the 16 shared: Mapterhorn's 32 at once)
+FETCH_WORKERS = 8           # normal decoded-tile downloads (provider queues do not benefit from more per process)
+PROBE_WORKERS = 4           # Dem._ahead(): raw downloads started ahead of the walk down the zooms
+URGENT_WORKERS = 4          # Dem.urgent(): its own fetch threads (with the 8 shared: bounded per-process I/O)
 # Decoded tiles mirrored on disk (<cache>/dem/decoded/...: float32 .npy), memory-mapped read-only: every server process
 # decoded the same tiles (WebP + Terrarium, ~3 ms a tile here, the z12 ground filter far more) and kept its own copy
 # (up to MEM_TILES MB a process, outside Python's traced memory); a mirrored tile is decoded once per machine and its
@@ -228,11 +229,12 @@ class Dem:
 
     # mem_tiles: decoded float32 512² tiles kept in memory (1 MB each; 512 per docs/V1_2_DESIGN.md §4.3).
     # fetcher: the server's netfetch.Fetcher (shared rate limits); None = a Fetcher of its own.
-    def __init__(self, cache_dir, fetch_workers=16, mem_tiles=None, fetcher=None):
+    def __init__(self, cache_dir, fetch_workers=None, mem_tiles=None, fetcher=None):
         self.cache_dir = cache_dir
         self.fetcher = fetcher if fetcher is not None else netfetch.Fetcher()
         self.fetcher.register_chain("dem", (MAPTERHORN["url"], AWS["url"]))
-        self.pool = ThreadPoolExecutor(fetch_workers, thread_name_prefix="dem-fetch")
+        self.pool = ThreadPoolExecutor(FETCH_WORKERS if fetch_workers is None else fetch_workers,
+                                        thread_name_prefix="dem-fetch")
         # The urgent lane (urgent()): the anchor's first block after a teleport needs ~10 tiles and waited ~33 s
         # behind hundreds queued by the far field, the road plans and the ground ahead (2026-10-16; alone 0.9 s).
         self.urgent_pool = ThreadPoolExecutor(URGENT_WORKERS, thread_name_prefix="dem-urgent")

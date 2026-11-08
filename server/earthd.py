@@ -757,6 +757,12 @@ def game_running():
         return True
 
 
+# What the server builds first (the mod's "Load first" setting, the 'graphics' message's loadPriority; see
+# Connection.priority_defers). Held-back work is released after LOAD_DEFER_MAX_S at most, so nothing waits for good.
+LOAD_PRIORITIES = ("all", "roads", "rails", "terrain")
+LOAD_DEFER_MAX_S = 120.0
+
+
 def road_tracker(conn):
     """A connection's road tiles' tracker: geotiles (roads.GeoTracker) when its mod places them (Connection.road_geo),
     else the anchor's."""
@@ -861,6 +867,8 @@ class Server:
         self.near_radii = dict(self.layout.near_radii if near_radii is None else near_radii)
         self.tile_cache = TILE_CACHE[cells]
         self.net = net if net is not None else netfetch.Fetcher()
+        import ealidar             # (England's DSM: measured building heights where Overture has none)
+        ealidar.configure(os.path.join(cache_dir, "ealidar"), self.net)
         self.dem = demmod.Dem(os.path.join(cache_dir, "dem"), fetcher=self.net)
         import railways as _railways    # (coarse elevation: rail decks raised over the roads under them)
         _railways.COARSE_AT = self.dem.coarse_at
@@ -2283,7 +2291,8 @@ class Server:
         if items is not None:           # front doors and shopfronts, driveways into the road mesh
             # (no street tree in a house: its own or the next tile's)
             rings = buildingsmod.near_rings(anchor.frame, tx, ty, self.mapdata, skip=skip)
-            props[:] = furnituremod.off_buildings(props, rings)
+            props[:] = furnituremod.off_buildings(
+                props, rings, groups=(furnituremod.G_STREET_TREE, furnituremod.G_GATE_PIER))
             drives = []
             props.extend(buildingsmod.doors(items, lines, x0, y0, drives))
             props.extend(buildingsmod.toll_booth_rows(items, x0, y0))
@@ -2368,7 +2377,9 @@ class Server:
                                    far_ground=railways.point_ground(
                                        anchor.frame,
                                        lambda la, lo: self.ground(anchor.frame, la, lo, self.dem.sample(la, lo, zoom)),
-                                       ("raw", aid, anchor.lat, anchor.lon)))
+                                       ("raw", aid, anchor.lat, anchor.lon)),
+                                   infra_fn=lambda key: self.mapdata.cell(
+                                       key, layers=("infrastructure",), kind="demand").layers.get("infrastructure"))
         bld = None
         garage_sound = ()
         oil_wells = []
@@ -2391,8 +2402,10 @@ class Server:
             import fences
             try:
                 props.extend(fences.rows(anchor.frame, infra_fn, box, elev))
+                import streetprops
+                props.extend(streetprops.rows(anchor.frame, infra_fn, box, elev, near_roads))
             except Exception as ex:
-                log.warning("fences: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
+                log.warning("fences/street props: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
             import picnic
             land_fn = lambda key: self.mapdata.cell(key, layers=("land_use",), kind="demand").layers.get("land_use")
             bld_fn = lambda key: self.mapdata.cell(key, layers=("buildings",), kind="demand").layers.get("buildings")
@@ -4870,6 +4883,8 @@ class Connection:
         # (treeScale) and the far buildings', skyline's and far bridges' (buildingScale); 1 = the defaults
         self.lod_scale = self.tree_scale = self.building_scale = 1.0
         self.view_cap = None                    # the far field's radius at most (m): the mod's fixed view distance
+        self.load_priority = "all"              # what loads first (LOAD_PRIORITIES; the mod's "Load first" setting)
+        self._defer_since = None                # monotonic time the current hold-back (priority_defers) began
 
     async def map_tiles(self, msg):
         """The world map's tiles {"tiles": [[z, x, y, layer?], ...]} (layer "sat" by default, "map", "labels"; the
@@ -5298,9 +5313,18 @@ class Connection:
             None, self.s.areas.command, area, op)
         self.send(self.s.areas_message({"id": msg.get("id"), "ok": bool(ok)}))
 
-    def send(self, msg):
-        if not self.writer.is_closing():
-            self.writer.write(protocol.encode(msg))
+    def send(self, msg, drop=False):
+        if self.writer.is_closing():
+            return
+        if drop:
+            # (a cosmetic status when the game is not reading its socket: writing it into a full transport
+            # can block the event loop for seconds and freeze every tile behind it, 2026-11-07)
+            try:
+                if self.writer.transport.get_write_buffer_size() > 512_000:
+                    return
+            except (AttributeError, RuntimeError):
+                pass
+        self.writer.write(protocol.encode(msg))
 
     def backlog(self):
         """status.backlog: desired tiles of the current anchor that are not shown yet (V1_4_SPEC §4)."""
@@ -5319,7 +5343,7 @@ class Connection:
         if self.s.horizon:              # M1h: the far-field radius (the mod's visibleDistance follows it)
             m["radius"] = round(self.radius)
             self.radius_sent = self.radius
-        self.send(m)
+        self.send(m, drop=True)
 
     def send_progress(self, aid):
         """The loading line's counts (the mod's loadprogress.lua): (done, wanted) of the road tiles, the tree tiles and
@@ -5339,7 +5363,7 @@ class Connection:
             return
         self.progress_sent, self.progress_at = counts, now
         self.send({"type": "load_progress", "anchorId": aid, "ground": list(counts[0]), "roads": list(roads),
-                   "trees": list(trees), "far": list(far), "net": net})
+                   "trees": list(trees), "far": list(far), "net": net}, drop=True)
 
     def ground_progress(self, aid):
         """(1, 1) once the ground under the player is final, else (0, 1): a teleport's graded first block still on its
@@ -5748,6 +5772,11 @@ class Connection:
                 self.brfar.drop_m = self.brfar.send_m + (buildingsmod.BRIDGE_FAR_DROP_M - buildingsmod.BRIDGE_FAR_SEND_M)
         if msg.get("photoPx") is not None:
             self.s.set_base_px(msg.get("photoPx"))
+        lp = msg.get("loadPriority")
+        if isinstance(lp, str) and lp in LOAD_PRIORITIES and lp != self.load_priority:
+            self.load_priority = lp
+            self._defer_since = None
+            log.info("graphics: load first: %s", lp)
         v = msg.get("viewM")
         if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
             cap = max(VIEW_CAP_MIN_M, float(v)) if v > 0 else None
@@ -5861,9 +5890,12 @@ class Connection:
             if cache.set_cap(cap):
                 log.info("cache: cap %s (from the mod)", f"{cap:g} GB" if cap else "unlimited")
         if msg.get("clear") is True:
+            category = msg.get("category")
+            if category is not None and category not in cache.CATEGORY_NAMES:
+                raise ValueError(f"cache category {category!r}")
             async def run():
-                _, freed = await self.loop.run_in_executor(None, cache.clear)
-                self.send(cache.message(cleared=freed))
+                _, freed = await self.loop.run_in_executor(None, lambda: cache.clear(category=category))
+                self.send(cache.message(cleared=freed, cleared_category=category))
             self.spawn(run())
         else:
             self.send(cache.message())
@@ -6336,6 +6368,32 @@ class Connection:
         """Is the far field round the active anchor still being built or sent (far_done not owed yet)?"""
         return bool(self.dirty or self.inflight)
 
+    def priority_defers(self):
+        """The kinds of work held back this pose by the 'Load first' setting (self.load_priority): a set of "roads", "far"
+        (the far terrain field), "veg", "bldg" (far buildings, skyline, far bridges), "extras" (turbines, the AI graph,
+        distant traffic). 'all': none. 'roads': the far field, vegetation, buildings and extras wait until the road tiles
+        round the car are all in. 'rails': the same (rails and tunnels are built inside the road tiles) and the AI graph,
+        distant traffic and turbines already wait under 'roads', so it is the same hold, kept apart for the setting's
+        wording. 'terrain': the road tiles wait until the far field is built. Never held back: the physics block under
+        the car (maybe_prefetch). A hold ends after LOAD_DEFER_MAX_S."""
+        p = self.load_priority
+        hold = frozenset()
+        if p in ("roads", "rails") and self.s.mapdata is not None:
+            done, want = self.roads.progress()
+            if want > 0 and done < want:
+                hold = frozenset({"far", "veg", "bldg", "extras"})
+        elif p == "terrain" and self.far_loading():
+            hold = frozenset({"roads"})
+        if not hold:
+            self._defer_since = None
+            return hold
+        now = time.monotonic()
+        if self._defer_since is None:
+            self._defer_since = now
+        elif now - self._defer_since > LOAD_DEFER_MAX_S:
+            return frozenset()
+        return hold
+
     def on_pose(self, msg):
         self.slots_gone(msg.get("slotsGone"))
         held = msg.get("held")
@@ -6435,7 +6493,9 @@ class Connection:
                 else:
                     cs = predict_chain(px, py, *self.vel, base.cx, base.cy, rule, PREFETCH_CHAIN, at)
                 self.predicted_chain = [self.s.layout.block_at(*c) for c in cs]
-        self.update_far()
+        defer = self.priority_defers()
+        if "far" not in defer:
+            self.update_far()
         if self.teleport_pending and time.monotonic() - self.teleport_t0 > TELEPORT_PAUSE_MAX_S:
             self.teleport_pending = False   # the mod never committed it (it stayed): the old place's work goes on
             self.wake.set()
@@ -6452,7 +6512,7 @@ class Connection:
             self.base_refresh(aid)
             self.pads_refresh(aid)
             self.roads_refresh(aid)
-        if self.s.mapdata is not None and aid == self.active:
+        if self.s.mapdata is not None and aid == self.active and "roads" not in defer:
             if getattr(self.roads, "geo", False):
                 anchor = self.s.anchors.get(aid)
                 self.roads.on_pose(self, aid, *self.focus, asyncio.get_running_loop(), self.s.build_roads_geo,
@@ -6471,12 +6531,12 @@ class Connection:
             if source is not None and self.signs_on:      # (after the roads: signs only for road tiles sent)
                 self.signs.on_pose(self, aid, *self.focus, asyncio.get_running_loop(), self.s.build_signs_tile,
                                    ready, version=source.tags.known())
-        if self.turbine_geo and aid == self.active:
+        if self.turbine_geo and aid == self.active and "extras" not in defer:
             anchor = self.s.anchors.get(aid)
             if anchor is not None:
                 self.turbines.on_pose(self, aid, *self.focus, asyncio.get_running_loop(), self.s.build_turbines_geo,
                                       view=self.view_at, frame=anchor.frame)
-        if self.s.veg is not None and aid == self.active:
+        if self.s.veg is not None and aid == self.active and "veg" not in defer:
             anchor = self.s.anchors.get(aid)
             if anchor is not None:                            # a teleport's cells built at once, ahead
                 la, lo, _ = anchor.frame.enu_to_geodetic(*self.focus, 0.0)
@@ -6485,7 +6545,7 @@ class Connection:
                              self.build_veg_geo if self.veg.geo else self.build_veg_tile,
                              view=self.view_at, foci=[f for f in self.foci if f[3]],
                              frame=anchor.frame if anchor is not None else None)
-        if self.s.buildings and aid == self.active:
+        if self.s.buildings and aid == self.active and "bldg" not in defer:
             geo = self.far_geo
             anchor = self.s.anchors.get(aid)
             frame = anchor.frame if anchor is not None else None
@@ -6501,7 +6561,7 @@ class Connection:
                 self.brfar.on_pose(self, aid, *self.focus, asyncio.get_running_loop(),
                                    self.build_far_geo("brfar") if geo else self.s.build_far_bridge_tile,
                                    view=self.view_at, frame=frame)
-        if self.s.traffic and aid == self.active and self.nav_may_start(aid):
+        if self.s.traffic and aid == self.active and "extras" not in defer and self.nav_may_start(aid):
             # (centred ahead of a moving car: the minimap's roads, the AI's and the GPS's graph, ran out in front at
             # speed, a graph built round where the car was when it started; the user, 2026-11-04)
             vx, vy = getattr(self, "vel", (0.0, 0.0))
@@ -6509,7 +6569,7 @@ class Connection:
             sp = max(math.hypot(vx, vy), 1e-6)
             cx, cy = self.focus[0] + vx / sp * lead, self.focus[1] + vy / sp * lead
             self.nav.on_pose(self, aid, cx, cy, asyncio.get_running_loop(), self.s.build_navgraph)
-        if self.traffic_on and aid == self.active and self.nav_may_start(aid):
+        if self.traffic_on and aid == self.active and "extras" not in defer and self.nav_may_start(aid):
             self.distant_traffic.on_pose(self, aid, *self.focus, asyncio.get_running_loop(), self.s.build_traffic_geo,
                                          view=self.view_at, frame=self.s.anchors[aid].frame)
             done, want = self.distant_traffic.progress()
@@ -7853,8 +7913,10 @@ def machine_profile(args, small):
                  args.road_processes)
     elif args.road_processes == ROAD_PROCESSES:
         args.road_processes = budget.road_processes()
-        log.info("road-tile processes: %d (%d threads, %.0f GB)", args.road_processes, os.cpu_count() or 0,
-                 budget.total_gb() or 0)
+        if args.workers == WORKERS:
+            args.workers = budget.far_workers()      # (a 32 GB PC: two, not three)
+        log.info("road-tile processes: %d, far-tile: %d (%d threads, %.0f GB)", args.road_processes, args.workers,
+                 os.cpu_count() or 0, budget.total_gb() or 0)
 
 FAST_POOL_KEEP = 2          # the saved areas' fast mode: its road processes, one per CPU thread but these ...
 FAST_POOL_GB = 2.0          # ... and at most one per this much memory (a road process holds ~1-1.5 GB at work) ...

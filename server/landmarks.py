@@ -27,7 +27,7 @@ LANDMARK = "landmark"           # the Spec class of a landmark (its name in Spec
 
 # OSM element ("w" a way, "r" a relation: a footprint with a courtyard) and id -> name
 WAYS = {("w", 5013364): "eiffel", ("w", 226413508): "arc", ("w", 123557148): "bigben", ("r", 1834818): "colosseum",
-        ("w", 32965412): "liberty"}
+        ("w", 32965412): "liberty", ("w", 204068874): "londoneye"}
 
 
 def of(src_record):
@@ -707,11 +707,93 @@ def liberty_collision(m, spec, gmin, mat):
     _lbox(m, P, -5.2, 5.2, -4.4, 4.4, gmin + SOL_BASE_Z, gmin + SOL_BASE_Z + 34.0, mat)
 
 
+# The London Eye (2000, OSM way 204068874): a 135 m structure, its wheel 120 m across (60 m radius) on a hub 75 m
+# over the bank, 32 passenger capsules round the rim, the spindle on two pairs of raking legs and a boarding platform
+# at the foot. Published dimensions; no third party's model or photos.
+EYE_H = 135.0
+EYE_R = 60.0
+EYE_HUB_Z = 75.0            # (135 m top - 60 m radius: the wheel's underside 15 m over the bank)
+EYE_CAPSULES = 32
+EYE_CAPSULE_L, EYE_CAPSULE_W = 5.2, 2.8
+EYE_AXLE_HALF = 2.2            # m between the two rims along the axle
+EYE_LEG_FOOT_U, EYE_LEG_FOOT_V = 20.0, 9.5
+EYE_COLOUR = (214, 218, 222, 255)
+
+
+def londoneye(m, spec, gmin, mat, lite=False, tokens=None):
+    """The London Eye on spec's footprint (its wheel in the footprint's long axis, the spindle across it)."""
+    c, u, v = _frame(spec)
+    axle = np.array([v[0], v[1], 0.0], np.float64)
+    n = float(np.hypot(axle[0], axle[1]))
+    if n < 1e-9:
+        return
+    axle /= n
+    hub = np.array([c[0], c[1], gmin + EYE_HUB_Z], np.float64)
+    seg = 20 if lite else 64
+    angles = np.linspace(0.0, 2.0 * math.pi, seg + 1)
+    rims = []
+    for side in (-1, 1):
+        off = axle * side * EYE_AXLE_HALF
+        rim = [np.array([hub[0] + u[0] * EYE_R * math.cos(t), hub[1] + u[1] * EYE_R * math.cos(t),
+                         hub[2] + EYE_R * math.sin(t)]) + off for t in angles]
+        rims.append(rim)
+        for a, b in zip(rim[:-1], rim[1:]):
+            beam(m, a, b, 1.2 if lite else 0.55, mat)
+    # the spokes: from the spindle to each rim (fewer far away)
+    step = max(1, seg // (8 if lite else seg))
+    for side, rim in zip((-1, 1), rims):
+        for k in range(0, seg, step):
+            beam(m, hub + axle * side * EYE_AXLE_HALF, rim[k], 1.0 if lite else 0.22, mat)
+    # the 32 capsules: a pod across the two rims at every 1/32 of the wheel
+    pods = 8 if lite else EYE_CAPSULES
+    for k in range(pods):
+        t = 2.0 * math.pi * k / pods
+        p = np.array([hub[0] + u[0] * EYE_R * math.cos(t), hub[1] + u[1] * EYE_R * math.cos(t),
+                      hub[2] + EYE_R * math.sin(t)])
+        beam(m, p - axle * (EYE_CAPSULE_L / 2.0), p + axle * (EYE_CAPSULE_L / 2.0),
+             EYE_CAPSULE_W if not lite else EYE_CAPSULE_W * 1.6, mat)
+        lamp_mat = (tokens or {}).get("lamp")
+        if lamp_mat is not None and not lite:
+            lamp(m, tuple(p), 0.5, lamp_mat)
+    # the legs: two pairs of raking beams from the bank to the spindle
+    for su in (-1.0, 1.0):
+        for sv in (-1.0, 1.0):
+            foot = np.array([c[0] + u[0] * su * EYE_LEG_FOOT_U + axle[0] * sv * EYE_LEG_FOOT_V,
+                             c[1] + u[1] * su * EYE_LEG_FOOT_U + axle[1] * sv * EYE_LEG_FOOT_V, gmin], np.float64)
+            top = hub + axle * sv * EYE_AXLE_HALF + np.array([u[0] * su * 2.0, u[1] * su * 2.0, 0.0])
+            beam(m, foot, top, 2.4 if lite else 1.6, mat)
+    # the boarding platform at the foot
+    P = _local(c, u, axle)
+    _lbox(m, P, -EYE_LEG_FOOT_U - 2.0, EYE_LEG_FOOT_U + 2.0, -EYE_LEG_FOOT_V - 1.0, EYE_LEG_FOOT_V + 1.0,
+           gmin, gmin + (1.2 if lite else 1.8), mat)
+
+
+def londoneye_collision(m, spec, gmin, mat):
+    """Its boarding platform and raking legs for physics (the wheel is 7.5 m over the bank: driven under)."""
+    c, u, v = _frame(spec)
+    axle = np.array([v[0], v[1], 0.0], np.float64)
+    n = float(np.hypot(axle[0], axle[1]))
+    if n < 1e-9:
+        return
+    axle /= n
+    P = _local(c, u, axle)
+    _lbox(m, P, -EYE_LEG_FOOT_U - 2.0, EYE_LEG_FOOT_U + 2.0, -EYE_LEG_FOOT_V - 1.0, EYE_LEG_FOOT_V + 1.0,
+           gmin - 1.0, gmin + 1.8, mat)
+    hub = np.array([c[0], c[1], gmin + EYE_HUB_Z], np.float64)
+    for su in (-1.0, 1.0):
+        for sv in (-1.0, 1.0):
+            foot = np.array([c[0] + u[0] * su * EYE_LEG_FOOT_U + axle[0] * sv * EYE_LEG_FOOT_V,
+                             c[1] + u[1] * su * EYE_LEG_FOOT_U + axle[1] * sv * EYE_LEG_FOOT_V, gmin], np.float64)
+            top = hub + axle * sv * EYE_AXLE_HALF + np.array([u[0] * su * 2.0, u[1] * su * 2.0, 0.0])
+            beam(m, foot, top, 2.0, mat)
+
+
 BUILDERS = {"eiffel": (eiffel, eiffel_collision, EIFFEL_ANTENNA_Z, EIFFEL_COLOUR, "iron"),
             "arc": (arc, arc_collision, ARC_H, ARC_COLOUR, "floodlit"),
             "bigben": (bigben, bigben_collision, BB_H, BB_COLOUR, "floodlit"),
             "colosseum": (colosseum, colosseum_collision, sum(COL_TIERS) + COL_ATTIC_H, COL_COLOUR, "stone"),
-            "liberty": (liberty, liberty_collision, SOL_TORCH_Z, SOL_COPPER, "stone")}
+            "liberty": (liberty, liberty_collision, SOL_TORCH_Z, SOL_COPPER, "stone"),
+            "londoneye": (londoneye, londoneye_collision, EYE_H, EYE_COLOUR, "iron")}
 
 
 # ------------------------------------------------------------------------------------------- the glue

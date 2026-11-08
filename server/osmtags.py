@@ -67,7 +67,8 @@ COLUMNS = {
     "lane_hw": "CASE WHEN highway IN ('motorway', 'trunk', 'motorway_link', 'trunk_link') THEN highway END",
     "bx0": "bbox.xmin", "by0": "bbox.ymin", "bx1": "bbox.xmax", "by1": "bbox.ymax",
 }
-TEXT_COLUMNS = {"sidewalk", "lit", "smoothness", "osm_surface", "osm_oneway", "name", "osm_highway", "lane_hw"}
+TEXT_COLUMNS = {"sidewalk", "sidewalk_left", "sidewalk_right", "lit", "smoothness", "osm_surface", "osm_oneway",
+                "name", "osm_highway", "lane_hw"}
 INT_COLUMNS = {"lanes", "osm_layer"}
 GROUPS_FILE = "groups.json"     # the version's parsed row groups (OsmTags._groups)
 TABLE_DIR = "rg"        # a row group's decoded ways (OsmTags._table), in the version's folder

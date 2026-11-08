@@ -151,9 +151,21 @@ class Source:
                     raise
                 size = int(m.group(3))
                 os.makedirs(os.path.dirname(pin), exist_ok=True)
-                with open(pin + ".tmp", "w") as f:
+                # a tmp of this process's own: two servers (a restart's overlap, two anchors) wrote the same
+                # pinned.tmp and one's rename met the other's open file (WinError 32, 2026-11-07), losing the
+                # picnic tables of the tiles read then; either write's content is this URL's, so a lost rename
+                # is no error
+                tmp = f"{pin}.{os.getpid()}.{threading.get_ident()}.tmp"
+                with open(tmp, "w") as f:
                     f.write(f"{etag}\n{size}\n{time.time()}\n")
-                os.replace(pin + ".tmp", pin)
+                try:
+                    os.replace(tmp, pin)
+                except OSError as ex:
+                    log.debug("picnic tables: pin not replaced: %s", ex)
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
             d = os.path.join(self.raw_dir, "picnicsource", re.sub(r"[^A-Za-z0-9]+", "_", etag).strip("_"))
             self._remote = (etag, rangeread.RemoteFile([self.url], size, d, self.fetcher, if_match=etag))
             self._checked = time.time()

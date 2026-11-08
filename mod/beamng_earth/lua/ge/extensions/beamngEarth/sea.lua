@@ -4,6 +4,7 @@
 -- under the sea. A WaterBlock's surface is at its position (the engine caps its volume at the box's
 -- centre), its volume DEPTH_M / 2 below.
 local M = {}
+local ambience = require('beamngEarth/ambience')
 
 M.DEPTH_M = 200         -- fallback z scale when the server sends no per-tile depth (water down to 100 m below the
                         -- surface). A tile's depth now reaches just under its sampled bed, so tunnels under a river
@@ -86,6 +87,8 @@ local madeRivers = {}   -- key -> id
 local madeAnchor = nil
 local phys = nil        -- { id, x, y, z } of the physics block
 local physStale = false -- tiles were made since it was: made again once a frame makes none
+local tunnelHide = false -- the player is inside a roofed space (a tunnel, an arch): no water volume or surface there
+local riversParked = false -- ... and every River deleted: a River's volume still pushes a car under it (Rotherhithe)
 M.created, M.nudges, M.physMade, M.riversMade, M.riverErrors = 0, 0, 0, 0, 0
 M.RIVER_PREFIX = 'bngEarthRiver_'
 -- Rivers farther than RIVER_HIDE_M from the camera (their box) are hidden, shown again within RIVER_SHOW_M: each River
@@ -93,6 +96,9 @@ M.RIVER_PREFIX = 'bngEarthRiver_'
 -- the A10 west of Genoa (404 Rivers in the 3 x 3 map cells, half of them over 2.4 km away; 2026-11-05). Far off, the
 -- ground photo shows the water. Checked every RIVER_CULL_S.
 M.RIVER_SHOW_M, M.RIVER_HIDE_M, M.RIVER_CULL_S = 1100, 1200, 0.5
+M.TUNNEL_NEAR_M = 90        -- m from a roofed space's box the tunnel's approach starts counting (Rotherhithe's water)
+M.TUNNEL_CLEAR_M = 160      -- ... and m round the player the water tiles are hidden there (a sea tile is >= 2048 m:
+                            -- the one under the approach covers the ramp, not only the river over the bore)
 M.riversHidden = 0
 local riverBox = {}     -- key -> { x0, y0, z0, x1, y1, z1 } (the River's world box, read once)
 local riverHidden = {}  -- key -> true while hidden
@@ -283,7 +289,7 @@ end
 
 -- Hide / show the made Rivers by their distance from the camera (RIVER_HIDE_M / RIVER_SHOW_M).
 local function cullRivers(now)
-  if now - lastCull < M.RIVER_CULL_S then return end
+  if riversParked or now - lastCull < M.RIVER_CULL_S then return end
   lastCull = now
   local cam = getCameraPosition and getCameraPosition()
   if not cam then return end
@@ -302,7 +308,9 @@ local function cullRivers(now)
       end
       if b then
         local d = M.boxDistance(b, cam)
-        if riverHidden[key] then
+        if tunnelHide then              -- (a tunnel under a river: its surface may not cut through the tube)
+          if not riverHidden[key] then o:setHidden(true); riverHidden[key] = true end
+        elseif riverHidden[key] then
           if d < M.RIVER_SHOW_M then o:setHidden(false); riverHidden[key] = nil end
         elseif d > M.RIVER_HIDE_M then
           o:setHidden(true); riverHidden[key] = true
@@ -334,9 +342,48 @@ function M.update(anchorId, player)
       madeRivers[key], riverBox[key], riverHidden[key] = nil, nil, nil
     end
   end
+  -- a tunnel under a river: park every River (delete: a hidden River still has its volume and pushes the car)
+  local tunneledNow = false
+  if player then
+    -- inside a tunnel, or approaching one: its ramp is outside the sound space, but a river's flat tile can lie
+    -- across it before the portal (Rotherhithe's approach showed a wall of water, 2026-11-08)
+    tunneledNow = (ambience.inTunnel(player.x, player.y, player.z) and true)
+      or (ambience.nearRoof and ambience.nearRoof(player.x, player.y, player.z, M.TUNNEL_NEAR_M) and true) or false
+    if not tunneledNow and player.z < 0.0 then
+      -- a tunnel whose sound space is not loaded (or a flooded-looking bore): below a water surface is dry
+      -- (the depth gate keeps the normal drive above the coast from walking the river nodes every frame)
+      local t = tileAt(player)
+      if t and player.z < t.z - 1.0 then
+        tunneledNow = true
+      else
+        for _, r in pairs(want.rivers or {}) do
+          for _, n in ipairs(r.nodes or {}) do
+            local dx, dy = player.x - n[1], player.y - n[2]
+            if math.sqrt(dx * dx + dy * dy) <= (tonumber(n[4]) or 10) / 2 + 5
+                and player.z < (tonumber(n[3]) or 0) - 1.0 then
+              tunneledNow = true
+              break
+            end
+          end
+          if tunneledNow then break end
+        end
+      end
+    end
+  end
+  if tunneledNow and not riversParked then
+    for key, id in pairs(madeRivers) do
+      local o = scenetree.findObjectById(id)
+      if o then o:delete() end
+    end
+    madeRivers, riverBox, riverHidden = {}, {}, {}
+    riversParked = true
+  elseif not tunneledNow and riversParked then
+    riversParked = false                     -- (M.update's create loop brings them back, CREATE_PER_FRAME at a time)
+  end
+  tunnelHide = tunneledNow
   local n, nudge = 0, false
   for key, r in pairs(want.rivers) do
-    if not madeRivers[key] then
+    if not madeRivers[key] and not riversParked then
       if n >= M.CREATE_PER_FRAME then break end
       createRiver(key, r)
       n = n + 1
@@ -352,7 +399,26 @@ function M.update(anchorId, player)
   end
   if player then
     local t = tileAt(player)
-    if not t then
+    -- inside a tunnel / roofed space (or on its approach): no water surface or volume may cut through the tube
+    -- (Rotherhithe and every river tunnel read as flooded, 2026-11-07/08); hide the tile the player is under and
+    -- those round it, restore them on leaving
+    for key, m in pairs(made) do
+      local dt = m.t
+      local dx = math.max(0, math.abs(player.x - dt.x) - dt.size / 2)
+      local dy = math.max(0, math.abs(player.y - dt.y) - dt.size / 2)
+      local hide = tunnelHide and (dt == t or dx * dx + dy * dy <= M.TUNNEL_CLEAR_M * M.TUNNEL_CLEAR_M)
+      if (m.tunnelHidden or false) ~= (hide and true or false) then
+        local o = scenetree.findObjectById(m.id)
+        if o then
+          if o.setHidden then o:setHidden(hide)
+          elseif o.setRenderEnabled then o:setRenderEnabled(not hide) end
+        end
+        m.tunnelHidden = hide or nil
+      end
+    end
+    if tunnelHide then
+      if phys then removePhys() end
+    elseif not t then
       if phys then removePhys() end
     else
       -- the tile's (tilted) surface under the player: a river falls across its tile

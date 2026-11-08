@@ -38,6 +38,8 @@ only, nothing redistributed. Licence notes marked *(verify)* must be re-checked 
 | LidarBC surface models (1 m DSM GeoTIFFs, same bucket, product `dsm`; index `server/lidarbc_dsm_index.json.gz`) | Province of British Columbia (LidarBC) | measured canopy height (DSM - DEM) for the trees in BC where flown, instead of Meta / WRI's estimate (`server/maprasters.py` bc_canopy) | Open Government Licence - British Columbia | "Canopy height: contains information licensed under the Open Government Licence - British Columbia (LidarBC); Meta and World Resources Institute (WRI)" (mapdata.LIDAR_CANOPY); overlay: "Canopy height: LidarBC (OGL-BC), Meta & WRI" | branch (2026-10-23) |
 | LidarBC orthophotos (10-15 cm GeoTIFFs, same bucket, product `orthophoto`; the streamable ones: JPEG or with overviews; index `server/lidarbc_ortho_index.json.gz`) | Province of British Columbia (LidarBC) | the near ground imagery where flown (`--imagery` source "bcortho", `server/bcortho.py`) | Open Government Licence - British Columbia | "Contains information licensed under the Open Government Licence - British Columbia (LidarBC orthophotos)" | branch (2026-10-23) |
 | HRDEM mosaic, 1 m DTM (Cloud-Optimised GeoTIFFs, https://canelevation-dem.s3.ca-central-1.amazonaws.com/hrdem-mosaic-1m/) | Natural Resources Canada (CanElevation series) | terrain from z13 down in Canada where LidarBC has none (`server/hrdem.py`) | Open Government Licence - Canada | "Contains information licensed under the Open Government Licence - Canada (Natural Resources Canada, HRDEM - CanElevation Series)" (credits.py) | branch (2026-10-23) |
+| LIDAR Composite DSM 1m (Environment Agency WCS, `https://environment.data.gov.uk/spatialdata/lidar-composite-digital-surface-model-last-return-dsm-1m/wcs`; coverage `Lidar_Composite_Elevation_LZ_DSM_1m`) | Environment Agency (Open Government Licence v3) | measured building heights in England where Overture has none (`server/ealidar.py`; the DSM over a footprint less the ground at its walls) | Open Government Licence v3 | "Building heights: (c) Environment Agency copyright and/or database right 2022" (credits.py) | new (2026-11-07) |
+| TfL Red Route Controls (ArcGIS FeatureServer, clipped to Greater London in `server/data/tfl_red_routes.npz`) | Transport for London | red-route kerb lines: single/double red where TfL's stopping controls run (`server/kerbline.py`, `roads.extras`) | TfL open data (Open Government Licence v3 per TfL's open-data terms; verify before redistribution) | "Contains TfL data (Red Route Controls)" (credits.py) | new (2026-11-07) |
 | Open-Meteo forecast API | Open-Meteo.com (weather models from national weather services) | real weather, time zone | CC BY 4.0 data, free non-commercial API use | "Weather data by Open-Meteo.com" | in use |
 | EGM2008 / EGM96 geopotential model | U.S. National Geospatial-Intelligence Agency (via GeographicLib data files) | real gravity incl. regional anomalies | public domain (NGA) *(verify the mirror's terms)* | "Gravity model: EGM2008, NGA" | in use |
 | OpenStreetMap | OpenStreetMap contributors | roads, buildings, water, signs, places | ODbL 1.0 | "© OpenStreetMap contributors" | planned |
@@ -107,6 +109,12 @@ only, nothing redistributed. Licence notes marked *(verify)* must be re-checked 
 | USGS 3DEP lidar point clouds | U.S. Geological Survey | building heights/roofs and canopy in the US | public domain | "USGS 3DEP" | planned |
 | LiDAR HD | IGN France | buildings, canopy heights | Etalab Open Licence 2.0 | "IGN - LiDAR HD" | planned |
 | Mapillary street-level imagery | Mapillary (Meta) | tuning the city generator against real photos | CC BY-SA 4.0, free API token | "Street-level imagery: Mapillary" | planned (reference) |
+
+## Shipped procedural assets and materials
+
+| Asset | Provider | Used for | Licence / terms | Attribution | Status |
+|---|---|---|---|---|---|
+| Existing `G_SHRUB` vegetation group and concrete texture maps (`bne_tex/t_bne_concrete_*`) | BeamNG.Earth project assets | mapped hedge/tree-row instances and the `driveway_concrete` frontage material; no external mesh or texture is redistributed | project asset terms; source maps are reused unchanged | BeamNG.Earth project assets | in use |
 
 ## Software and libraries
 

@@ -396,11 +396,11 @@ def m20(tip, t):
 
 
 # Turn arrows (MUTCD 3B.20: two per turn lane, near the start of the full lane and before the stop line) from
-# OpenStreetMap's turn:lanes, drawn with West Coast USA's road-marking decal sheet (roadmarkings1, 4 x 4 cells:
-# row 0 left, right and straight arrows; cell rows from the top: arrow_quad turns them into the shape's V)
-ARROW_MATERIAL = "roadmarkings1"
-ARROW_CELLS = {"left": (0.0, 0.0), "right": (0.25, 0.0), "through": (0.5, 0.0)}
-ARROW_CELL_M = (4.0, 3.0)           # the cell's quad: m along, across (the arrow ~2.8 m by 0.8 m in it)
+# OpenStreetMap's turn:lanes. The white shape is built as its own convex pieces (a shaft and a head, roads.mark_poly)
+# in the white line material: the WCUSA decal sheet's cell drew a black square around every arrow (game 0.40's
+# sheet decal is opaque, the user's screenshot 2026-11-08).
+ARROW_LEN_M, ARROW_TAIL_M, ARROW_SHAFT_W = 3.5, 1.75, 0.32
+ARROW_HEAD_M, ARROW_HEAD_W = 1.05, 1.0
 ARROW_AT_M = (12.0, 45.0)           # m before the lane's end (the stop line, then one further back)
 
 
@@ -478,17 +478,41 @@ def arrows(osm, pts, two_way, drive, lanes, left_hand=False):
     return out
 
 
-def arrow_quad(centre, t, kind_):
-    """(corners (4, 3), uvs (4, 2)) of an arrow's quad: tip ahead (travel direction t)."""
-    L, W = ARROW_CELL_M
-    n = np.array([-t[1], t[0]])
+def _ccw(pts):
+    """The convex polygon pts (k, 2) wound counter-clockwise seen from above (roadmesh's polys face up)."""
+    a = 0.5 * float(np.sum(pts[:, 0] * np.roll(pts[:, 1], -1) - np.roll(pts[:, 0], -1) * pts[:, 1]))
+    return pts if a >= 0.0 else pts[::-1].copy()
+
+
+def arrow_parts(centre, t, kind_):
+    """[convex (k, 3) polygons] of a turn arrow's white paint at centre (3,), its tip along t (2,): a shaft quad
+    and a triangular head (the turn arrows bend towards their lane). Each polygon is a roads.mark_poly chunk of the
+    white line material, so no decal sheet (and no black square) is drawn."""
     c = np.asarray(centre, np.float64)
-    fwd, side = np.r_[t * L / 2, 0.0], np.r_[n * W / 2, 0.0]
-    corners = np.stack([c + fwd + side, c + fwd - side, c - fwd - side, c - fwd + side])
-    u0, v0 = ARROW_CELLS[kind_]
-    # (the shape's V runs up from the sheet's bottom: the cell's top (1 - v0) at the arrow's tip. Read from the top
-    # down, every arrow showed the bottom row upside down: blank in the old sheet, game 0.40's "EXIT" for the
-    # straight ones, Baltimore 2026-10-29)
-    top, bottom = 1.0 - v0, 1.0 - v0 - 0.25
-    uv = np.array([[u0, top], [u0 + 0.25, top], [u0 + 0.25, bottom], [u0, bottom]])
-    return corners, uv
+    t = np.asarray(t, np.float64)[:2]
+    t = t / max(float(np.hypot(*t)), 1e-9)
+    n = np.array([-t[1], t[0]])
+    z = float(c[2]) if len(c) > 2 else 0.0
+    hw = ARROW_SHAFT_W / 2.0
+    if kind_ == "through":
+        tail = c[:2] - t * ARROW_TAIL_M
+        front = c[:2] + t * (ARROW_LEN_M - ARROW_TAIL_M - ARROW_HEAD_M)
+        shaft = np.array([tail + n * hw, tail - n * hw, front - n * hw, front + n * hw])
+        head = np.array([front + n * (ARROW_HEAD_W / 2), front - n * (ARROW_HEAD_W / 2),
+                         front + t * ARROW_HEAD_M])
+        parts = [shaft, head]
+    else:
+        s = 1.0 if kind_ == "left" else -1.0
+        side = n * s
+        bend = c[:2] - t * 0.1
+        d2 = t * 0.7071 + side * 0.7071
+        d2 = d2 / max(float(np.hypot(*d2)), 1e-9)
+        dn = np.array([-d2[1], d2[0]])
+        tail = c[:2] - t * ARROW_TAIL_M
+        shaft = np.array([tail + n * hw, tail - n * hw, bend - n * hw, bend + n * hw])
+        base = bend + d2 * (ARROW_HEAD_M + 0.55)
+        bend_quad = np.array([bend + dn * hw, bend - dn * hw, base - dn * hw, base + dn * hw])
+        head = np.array([base + dn * (ARROW_HEAD_W / 2), base - dn * (ARROW_HEAD_W / 2),
+                         base + d2 * ARROW_HEAD_M])
+        parts = [shaft, bend_quad, head]
+    return [np.c_[_ccw(p), np.full(len(p), z)] for p in parts]

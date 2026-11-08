@@ -20,6 +20,7 @@ import io
 import logging
 import math
 import os
+import sys
 import threading
 from runtimeprofiler import ThreadPoolExecutor
 import time
@@ -189,7 +190,14 @@ def _write_raw(raw, r):
 
 
 def _open_raw(raw):
-    buf = np.asarray(np.load(raw, mmap_mode="r", allow_pickle=False))   # (a plain view: np.memmap's per-slice hooks)
+    try:
+        buf = np.asarray(np.load(raw, mmap_mode="r", allow_pickle=False))   # (a plain view: np.memmap's per-slice hooks)
+    except (OSError, ValueError) as e:
+        raise ValueError(f"not a raster: {raw}") from e
+    if sys.platform == "win32":
+        # Windows cannot remove a mapped file while a caller still holds a view from it.
+        buf = buf.copy()
+        buf.flags.writeable = False
     if buf.dtype != np.uint8 or buf.ndim != 1 or len(buf) < 4 * RAW_HEAD:
         raise ValueError(f"not a raster: {buf.dtype} {buf.shape}")
     magic, b, m, k, n = (int(v) for v in buf[:4 * RAW_HEAD].view("<i4"))
@@ -377,7 +385,7 @@ class SeaCarver:
                 self._full_asked.discard(k)
             return r
 
-    def land_raster(self, x, y):
+    def land_raster(self, x, y, background=True):
         """(raster, full) of cell (x, y) without waiting for the sea's bathymetry (NOAA's server: 1-22 s a request, two
         at a time; a coastal first visit's road tiles waited minutes for it, Stavanger / Ryfylke 2026-11-06): the
         raster() answer when at hand (full True), else the cell built without it (full False: its sea floor the
@@ -419,8 +427,9 @@ class SeaCarver:
                 self._land[k] = r
                 while len(self._land) > LAND_CELLS:
                     self._land.popitem(last=False)
-                ask = k not in self._full_asked
-                self._full_asked.add(k)
+                ask = background and k not in self._full_asked
+                if ask:
+                    self._full_asked.add(k)
                 if ask and self._full_ex is None:
                     self._full_ex = ThreadPoolExecutor(FULL_THREADS, thread_name_prefix="sea-full")
         if ask:
@@ -1068,11 +1077,11 @@ class SeaCarver:
             if len(need) > 1:
                 with ThreadPoolExecutor(min(len(need), FETCH_THREADS), thread_name_prefix="sea-cells") as ex:
                     list(ex.map(lambda k: self._water((mapcells.ZOOM, k[0], k[1])), need))
-                    list(ex.map(lambda k: self.land_raster(*k), need))
+                    list(ex.map(lambda k: self.land_raster(*k, background=False), need))
         for kx, ky in _cells_of(cx, cy):
             sel = (cx == kx) & (cy == ky)
             if wait:
-                r, full = self.land_raster(int(kx), int(ky))
+                r, full = self.land_raster(int(kx), int(ky), background=not wait)
             elif self.ready(int(kx), int(ky)):
                 r, full = self.raster(int(kx), int(ky)), True
             else:

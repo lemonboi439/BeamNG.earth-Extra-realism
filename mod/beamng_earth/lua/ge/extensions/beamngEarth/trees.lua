@@ -33,7 +33,7 @@ M.TILE_CAP = { { 300, 6000 }, { 700, 2400 }, { 1500, 900 }, { 1e9, 400 } }
 M.GROUP_MAX_M = { shrub = 250, desert_shrub = 250, rock = 400, desert_rock = 400, cliff = 1500, pylon = 1500, hvpole = 1000, gantry = 800, sub_breaker = 400, sub_mast = 1000, sub_support = 300,
   sub_transformer = 500, sub_fence = 200, lamplens = 800, lampglow = 6000, rrcross = 300, rrcross_eu = 300, rrflash = 400,
   rrflash_eu = 400, rrgate = 400, rrgate_l = 400, rrgate_eu = 400, rrgate_eu_l = 400, door = 120, hydrant = 200, bin = 200, bench = 200, polelamp = 400,
-  stop = 300, giveway = 300, signal = 500, fence = 150, wallsign_logistics = 800, wallsign_rentabox = 800, wallsign_lemon = 800, wallsign_turboburger = 500,
+  stop = 300, giveway = 300, signal = 500, signal_eu = 500, signal_post = 500, fence = 150, wallsign_logistics = 800, wallsign_rentabox = 800, wallsign_lemon = 800, wallsign_turboburger = 500,
   speed30 = 300, speed40 = 300, speed50 = 300, speed60 = 300, speed70 = 300, guardrail = 4000, guardrail_start = 4000, guardrail_end = 4000,
   guardrail_back = 4000, guardrail_back_start = 4000, guardrail_back_end = 4000 }
 M.FOREST_NAME = 'bngEarthForest'      -- a prefix: small Forests from a pool ('bngEarthForest_<n>')
@@ -85,7 +85,9 @@ M.SHAPE_VARIANTS = 4
 -- fences and lamps keep their variants (their populations reach thousands).
 M.ONE_SPELLING = { door = true, hydrant = true, bin = true, bench = true, busshelter = true, billboard = true,
   barn = true, celltower = true, container = true, gantry = true, giveway = true, stop = true, signal = true,
+  signal_eu = true, signal_post = true,
   picnicgrill = true, picnictable = true, pylon = true, hvpole = true, tollbooth = true, watertower = true, cable = true,
+  gardenwall = true, gatepier = true, manhole = true, grate = true, speedhump = true, speedcamera = true,
   rrcross = true, rrcross_eu = true, rrflash = true, rrflash_eu = true, rrgate = true, rrgate_eu = true,
   rrgate_eu_l = true, rrgate_l = true, sub_breaker = true, sub_fence = true, sub_mast = true, sub_support = true,
   sub_transformer = true, wallsign_lemon = true, wallsign_logistics = true, wallsign_rentabox = true,
@@ -172,6 +174,8 @@ M.CATALOG = {
     { '/art/shapes/common/building_architect_modules/doors/R_HS_B_DR_03_100x210', 2.2 },
   },
   signal = { { '/art/shapes/objects/s_trafficlight_boom_sn', 9.4 } },      -- (setup: M.STATIC_SIGNAL)
+  signal_eu = { { IT .. 'buildings/italy_traffic_light_ew_pd_right', 4.8 } },
+  signal_post = { { WCA .. 'objects/trafficlight_city1', 4.8 } },
   stop = { { '/levels/east_coast_usa/art/shapes/signs_usa/sign_stop', 3.0 } },
   giveway = { { '/art/shapes/garage_and_dealership/Clutter/italy_traf_sign_give_way', 3.0 } },
   -- a low wooden yard fence, 5.4 m along its x (server buildings._front_fence)
@@ -264,9 +268,26 @@ M.CATALOG.chainlink = { { '/art/shapes/objects/s_chainlink_old', 1.76 } }
 M.CATALOG.noisewall = { { WCA .. 'objects/s_concrete_noiseblocker', 2.4 } }
 -- the mapped garden walls' own brick panel (tools/build_garden_wall.py; bne_garden_brick / bne_garden_stone)
 M.CATALOG.gardenwall = { { '/levels/beamng_earth/art/shapes/beamngEarth/bne_garden_wall', 0.9 } }
+-- a gate pier at each side of a driveway's dropped kerb (server roads.py's caps, furniture.py places them)
+M.CATALOG.gatepier = { { '/levels/beamng_earth/art/shapes/beamngEarth/bne_gate_pier', 1.11 } }
+-- drains, manholes, speed humps and speed cameras (server streetprops.py; tools/build_street_props.py)
+M.CATALOG.manhole = { { '/levels/beamng_earth/art/shapes/beamngEarth/bne_manhole', 0.03 } }
+M.CATALOG.grate = { { '/levels/beamng_earth/art/shapes/beamngEarth/bne_grate', 0.05 } }
+-- a low UK flat-top hump (3.7 m, 75 mm, white ramp triangles), three widths to match the carriageway between kerbs
+M.CATALOG.speedhump = { { '/levels/beamng_earth/art/shapes/beamngEarth/bne_speed_hump', 0.075 } }
+M.CATALOG.speedhump6 = { { '/levels/beamng_earth/art/shapes/beamngEarth/bne_speed_hump6', 0.075 } }
+M.CATALOG.speedhump5 = { { '/levels/beamng_earth/art/shapes/beamngEarth/bne_speed_hump5', 0.075 } }
+M.CATALOG.speedcamera = { { '/levels/beamng_earth/art/shapes/beamngEarth/bne_speed_camera', 3.94 } }
 M.GROUP_MAX_M.chainlink = 800
 M.GROUP_MAX_M.noisewall = 2000
 M.GROUP_MAX_M.gardenwall = 700
+M.GROUP_MAX_M.gatepier = 500
+M.GROUP_MAX_M.manhole = 300
+M.GROUP_MAX_M.grate = 300
+M.GROUP_MAX_M.speedhump = 350
+M.GROUP_MAX_M.speedhump6 = 350
+M.GROUP_MAX_M.speedhump5 = 350
+M.GROUP_MAX_M.speedcamera = 500
 -- Picnic tables and grills in parks (server picnic.py): Utah's table (2 x 1.4 m, 0.85 m high) and East
 -- Coast's grill. The table's materials live with Utah's buildings.
 M.CATALOG.picnictable = { { UT .. 'buildings/ut_picnic_table_a', 0.85 } }

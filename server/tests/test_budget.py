@@ -47,6 +47,10 @@ class BudgetTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"BNGE_BUDGET": "desktop"}):
             self.assertFalse(budget.small(8.0))
 
+    def test_streaming_worker_caps(self):
+        self.assertLessEqual(dem.FETCH_WORKERS + dem.URGENT_WORKERS + dem.PROBE_WORKERS, 16)
+        self.assertLessEqual(imagery.FETCH_WORKERS + imagery.URGENT_WORKERS, 10)
+
     def test_road_processes_by_threads_and_memory(self):
         self.assertEqual(budget.road_processes(16, 62.0), 4)
         self.assertEqual(budget.road_processes(12, 16.0), 3)     # (16 GB: not four ~1.5 GB processes)
@@ -61,11 +65,11 @@ class BudgetTest(unittest.TestCase):
             self.assertFalse(budget.apply(False))
             self.assertEqual((dem.MEM_TILES, mapdata.MEM_MB, seacarve.MEM_CELLS, roads.FACTS_MEM_KEPT),
                              (512, 192, 24, 640), "a 96 GB+ machine: the desktop sizes stay")
-        # the user's PC (34 GB, 12 threads, 12 processes): every cache scales to its RAM share (floored at half)
+        # the user's PC (34 GB, 12 threads): the game and Windows need the rest, so 2 road + 2 far + 5 fixed
         with mock.patch.object(budget, "total_gb", return_value=34.0), \
                 mock.patch("os.cpu_count", return_value=12):
             self.assertFalse(budget.apply(False))
-            self.assertEqual(budget.proc_count(), 12, "4 road + 3 far + 5 fixed")
+            self.assertEqual(budget.proc_count(), 10, "3 road + 2 far + 5 fixed on a 32 GB PC")
             got = (dem.MEM_TILES, mapdata.MEM_MB, seacarve.MEM_CELLS, roadwidth.WALL_CELLS, roadwidth.COMBOS,
                    heightmap.CHUNK_CACHE, imagery.MEM_TILES, imagery.MEM_FINISHED_MB, imagery.MEM_DECODED,
                    deshadow.MEM_TILES, roads.FACTS_MEM_KEPT, grading.PLAN_MEM_MB)

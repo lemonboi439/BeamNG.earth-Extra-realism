@@ -330,6 +330,23 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(mr, ["road_asphalt_2lane"], "the asphalt is in the road mesh ...")
         self.assertAlmostEqual(Pr[:, 2].max(), 22.0 + roadmesh.DECK_SKIN, msg="... just over the slab")
 
+    def test_deck_ends_close_at_its_abutments(self):
+        """The deck's open end was a hole into the slab seen from below; the abutment ends are capped, a chunk
+        ending at a tile border stays open (the next tile's goes on)."""
+        deck = {"m": "road_asphalt_2lane", "w": 8.0, "tl": 11.0, "p": 20, "deck": True, "fixed": True,
+                "n": [[0, 0, 20.0], [50, 0, 20.0]], "abut": [[0.0, 0.0], [50.0, 0.0]]}
+        P, T = roadmesh.deck([deck], (0.0, 0.0, 0.0))[:2]
+        n = np.cross(P[T[:, 1]] - P[T[:, 0]], P[T[:, 2]] - P[T[:, 0]])
+        n /= np.linalg.norm(n, axis=1)[:, None]
+        c = P[T].mean(1)
+        deck_end = np.abs(c[:, 1]) < 4.0
+        self.assertTrue(((np.abs(c[:, 0]) < 0.01) & deck_end & (n[:, 0] < -0.9)).any(), "the start's face")
+        self.assertTrue(((np.abs(c[:, 0] - 50.0) < 0.01) & deck_end & (n[:, 0] > 0.9)).any(), "the end's face")
+        deck.pop("abut")
+        P2, T2 = roadmesh.deck([deck], (0.0, 0.0, 0.0))[:2]
+        c2 = P2[T2].mean(1)
+        self.assertFalse(((np.abs(c2[:, 0]) < 0.01) & (np.abs(c2[:, 1]) < 4.0)).any(), "no cap mid-bridge")
+
 
 class BridgeLookTest(unittest.TestCase):
     """Girders, parapets and piers (2026-10-17, the user: "Bridges need a lot of work in general")."""

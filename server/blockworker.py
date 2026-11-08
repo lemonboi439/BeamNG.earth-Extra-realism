@@ -55,6 +55,8 @@ class _State:
         revisit.CACHE_DIR = cache_dir
         self.imagery = None         # (its settings, imagery.Imagery from the disk alone): far_tile's textures
         net = netfetch.Fetcher(offline=offline)
+        import ealidar             # (England's DSM: measured building heights where Overture has none)
+        ealidar.configure(os.path.join(cache_dir, "ealidar"), net)
         self.dem = demmod.Dem(os.path.join(cache_dir, "dem"), fetcher=net)
         import railways as _railways    # (coarse elevation: rail decks raised over the roads under them)
         _railways.COARSE_AT = self.dem.coarse_at
@@ -845,7 +847,8 @@ def _tile_parts(mark, frame, tile, zoom, g, buildings, left_hand, mph, gas_stati
     mark("airports")
     x0, y0, _, _ = box
     if items is not None:               # front doors and shopfronts, driveways into the road mesh
-        props[:] = furniture.off_buildings(props, buildingsmod.near_rings(frame, tx, ty, _s.md, skip=skip))     # (no street tree in a house)
+        props[:] = furniture.off_buildings(props, buildingsmod.near_rings(frame, tx, ty, _s.md, skip=skip),
+                                           groups=(furniture.G_STREET_TREE, furniture.G_GATE_PIER))  # (no street tree in a house)
         drives = []
         props.extend(buildingsmod.doors(items, lines, x0, y0, drives))
         props.extend(buildingsmod.toll_booth_rows(items, x0, y0))
@@ -941,7 +944,9 @@ def _tile_parts(mark, frame, tile, zoom, g, buildings, left_hand, mph, gas_stati
                                      frame, lambda la, lo: ground(frame, la, lo, _s.dem.sample(la, lo, zoom)),
                                      ("raw",) + tuple(rkey)),
                                  wet=_s.sea.depth if getattr(_s, "sea", None) is not None else None,
-                                 tube_out=P.rtube)
+                                 tube_out=P.rtube,
+                                 infra_fn=lambda key: _s.md.cell(key, layers=("infrastructure",), kind="demand")
+                                 .layers.get("infrastructure"))
     P.rtmesh = roadmeshmod.tunnel(P.rtube, (x0, y0, 0.0)) if P.rtube else None
     mark("railways")
     bld = None
@@ -968,8 +973,10 @@ def _tile_parts(mark, frame, tile, zoom, g, buildings, left_hand, mph, gas_stati
         import fences
         try:
             props.extend(fences.rows(frame, infra_fn, box, elev))
+            import streetprops
+            props.extend(streetprops.rows(frame, infra_fn, box, elev, near_roads))
         except Exception as ex:
-            log.warning("fences: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
+            log.warning("fences/street props: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
         import picnic
         land_fn = lambda key: _s.md.cell(key, layers=("land_use",), kind="demand").layers.get("land_use")
         bld_fn = lambda key: _s.md.cell(key, layers=("buildings",), kind="demand").layers.get("buildings")

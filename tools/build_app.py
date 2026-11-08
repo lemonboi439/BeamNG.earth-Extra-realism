@@ -129,6 +129,19 @@ def own_bootloader():
     return p if os.path.isfile(p) else None
 
 
+def windows_runtime_binaries():
+    """Return Python's ctypes extension and bundled libffi DLLs for a frozen Windows runtime."""
+    if not IS_WIN:
+        return []
+    prefixes = [getattr(sys, "base_prefix", ""), getattr(sys, "prefix", "")]
+    paths = []
+    for prefix in dict.fromkeys(p for p in prefixes if p):
+        paths.extend(glob.glob(os.path.join(prefix, "DLLs", "_ctypes.pyd")))
+        paths.extend(glob.glob(os.path.join(prefix, "Library", "bin", "ffi*.dll")))
+        paths.extend(glob.glob(os.path.join(prefix, "DLLs", "ffi*.dll")))
+    return sorted(dict.fromkeys(p for p in paths if os.path.isfile(p)))
+
+
 # PyInstaller with EXE's bootloader lookup (one function since 3.x) pointed at our own run.exe: the console,
 # release variant is the only one this build asks for. The installed package stays as it is.
 BOOT_SHIM = ("import sys\n"
@@ -199,6 +212,8 @@ def pyinstaller(work, ico, onefile, ver=None, boot=None):
         p = os.path.join(server, lib)
         if os.path.isfile(p) and (lib.endswith(".pyd") == IS_WIN):
             cmd += ["--add-binary", f"{p}{SEP}."]
+    for p in windows_runtime_binaries():
+        cmd += ["--add-binary", f"{p}{SEP}."]
     gc = os.path.join(ROOT, "tools", "gcpatch", "build", "libbngearth_gcpatch.so")
     if not IS_WIN and os.path.isfile(gc):
         cmd += ["--add-binary", f"{gc}{SEP}gcpatch"]
