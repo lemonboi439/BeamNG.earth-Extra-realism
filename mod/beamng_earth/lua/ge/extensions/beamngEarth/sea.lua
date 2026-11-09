@@ -81,9 +81,13 @@ local TEXTURES = {      -- field, East Coast's file, the stock fallback (0.40 mo
 }
 
 local want = nil         -- { anchorId, tiles = { key -> tile }, rivers = { key -> river } } from the server
+local rawWant = nil      -- server geometry before finite-column tunnel exclusions
+local guardOwners, guardRecords = {}, {} -- road tile instances, retained until their last mesh is deleted
+local segments, fluidDirty = {}, false
 M.riversVersion = 0      -- counts changes of want's rivers (ambience.lua's river sounds follow them)
 local made = {}         -- key -> { id, t }
 local madeRivers = {}   -- key -> id
+local riverData = {}    -- key -> definition used for its live object
 local madeAnchor = nil
 local phys = nil        -- { id, x, y, z } of the physics block
 local physStale = false -- tiles were made since it was: made again once a frame makes none
@@ -119,7 +123,7 @@ end
 
 local function removeAll()
   for _, m in pairs(made) do
-    local o = scenetree.findObjectById(m.id)
+    local o = m.id and scenetree.findObjectById(m.id)
     if o then o:delete() end
   end
   for _, id in pairs(madeRivers) do
@@ -168,6 +172,7 @@ local function createRiver(key, r)
   if o.reloadTextures then o:reloadTextures() end
   if o.regenerate then o:regenerate() end
   madeRivers[key] = o:getId()
+  riverData[key] = r
   M.riversMade = M.riversMade + 1
 end
 
@@ -199,7 +204,7 @@ local function makePhys(p, z, depth)
   -- the textures too, though it is never drawn: without them each move logged "Texture missing: " (an empty name)
   -- twice (342 log errors in a 33 min drive, BeamNG 0.40.4, 2026-10-30)
   for _, x in ipairs(TEXTURES) do o:setField(x[1], 0, exists(x[2]) and x[2] or x[3]) end
-  o:setField('gridElementSize', 0, tostring(M.PHYS_SIZE / 16))
+  o:setField('gridElementSize', 0, tostring(size / 16))
   o:setPosition(vec3(p.x, p.y, z))
   o:setScale(vec3(M.PHYS_SIZE, M.PHYS_SIZE, depth))
   o.canSave = false
@@ -211,6 +216,7 @@ local function makePhys(p, z, depth)
 end
 
 local function create(key, t)
+  if (t.depth or M.DEPTH_M / 2) <= .01 then made[key] = { t = t }; return end
   local o = createObject('WaterBlock')
   local depth = tonumber(t.depth) or M.DEPTH_M
   setGridSize(o, t.size)
@@ -242,6 +248,84 @@ local function inside(t, p)
   return math.abs(p.x - t.x) <= t.size / 2 and math.abs(p.y - t.y) <= t.size / 2
 end
 
+local function sameTile(a, b)
+  return b and a.x == b.x and a.y == b.y and a.z == b.z and a.size == b.size and a.nx == b.nx and a.ny == b.ny
+    and (a.depth or M.DEPTH_M / 2) == (b.depth or M.DEPTH_M / 2)
+end
+local function sameRiver(a, b)
+  if a == b then return true end
+  if not a or not b or a.flow ~= b.flow or a.kind ~= b.kind or #a.nodes ~= #b.nodes then return false end
+  for i, n in ipairs(a.nodes) do for j = 1, 5 do if n[j] ~= b.nodes[i][j] then return false end end end
+  return true
+end
+local function replan(protectionChanged)
+  if not rawWant then return end
+  want = { anchorId = rawWant.anchorId, shores = rawWant.shores,
+    tiles = waterguard.blocks(rawWant.tiles, segments, M.DEPTH_M / 2),
+    rivers = waterguard.rivers(rawWant.rivers, segments) }
+  -- Synchronous removal is intentional: roads.update runs before sea.update. No old deep fluid volume may
+  -- survive until after the new tunnel collision has been published, even when creations span many frames.
+  for key, m in pairs(made) do
+    if not sameTile(m.t, want.tiles[key]) then
+      local o = m.id and scenetree.findObjectById(m.id); if o then o:delete() end
+      made[key] = nil
+      fluidDirty = true
+    end
+  end
+  for key, id in pairs(madeRivers) do
+    if not sameRiver(riverData[key], want.rivers[key]) then
+      local o = scenetree.findObjectById(id); if o then o:delete() end
+      madeRivers[key], riverData[key], riverBox[key], riverHidden[key] = nil, nil, nil, nil
+      fluidDirty = true
+    end
+  end
+  if protectionChanged or fluidDirty then removePhys(); physStale, fluidDirty = true, true end
+  M.riversVersion = M.riversVersion + 1
+end
+local function rebuildGuards()
+  local records = {}; for id, r in pairs(guardRecords) do records[id] = r.record end
+  segments = waterguard.segments(records)
+  replan(true)
+end
+
+-- token identifies a road tile INSTANCE, not its reusable tile key. Object references retain it through
+-- time-sliced deletion, content swaps and disconnects. Records carry geodetic floor points from the server.
+function M.protect(token, records, anchor)
+  if not anchor or type(records) ~= 'table' or #records == 0 or guardOwners[token] then return end
+  local ids, changed = {}, false
+  for _, r in ipairs(records) do
+    if type(r.nodes) == 'table' and #r.nodes >= 2 and type(r.id) == 'string' and r.r and r.h then
+      local entry = guardRecords[r.id]
+      if not entry then
+        local nodes = {}
+        for _, p in ipairs(r.nodes) do nodes[#nodes + 1] = { anchor:geodeticToWorld(p[1], p[2], p[3]) } end
+        entry = { refs = 0, geo = r, record = { nodes = nodes, r = r.r, h = r.h } }
+        guardRecords[r.id], changed = entry, true
+      end
+      if not ids[r.id] then ids[r.id] = true; entry.refs = entry.refs + 1 end
+    end
+  end
+  guardOwners[token] = { refs = 1, ids = ids }
+  if changed then rebuildGuards() end
+  return token
+end
+function M.retain(token)
+  if guardOwners[token] then guardOwners[token].refs = guardOwners[token].refs + 1 end
+end
+function M.release(token)
+  local owner = guardOwners[token]
+  if not owner then return end
+  owner.refs = owner.refs - 1
+  if owner.refs > 0 then return end
+  guardOwners[token] = nil
+  local changed = false
+  for id in pairs(owner.ids) do
+    local entry = guardRecords[id]; entry.refs = entry.refs - 1
+    if entry.refs == 0 then guardRecords[id], changed = nil, true end
+  end
+  if changed then rebuildGuards() end
+end
+
 -- A 'sea' message: { anchorId, tiles = { {key, x, y, z, size, nx, ny}, ... } }.
 function M.onMessage(msg)
   local tiles = {}
@@ -263,8 +347,8 @@ function M.onMessage(msg)
       shores[tostring(r[1])] = { kind = r[2], nodes = r[3] }
     end
   end
-  want = { anchorId = msg.anchorId, tiles = tiles, rivers = rivers, shores = shores }
-  M.riversVersion = M.riversVersion + 1
+  rawWant = { anchorId = msg.anchorId, tiles = tiles, rivers = rivers, shores = shores }
+  replan(false)
 end
 
 -- The server's rivers (key -> { kind, flow, nodes = { {x, y, z, width, depth}, ... } }) and their anchor, or nil.
@@ -330,7 +414,7 @@ function M.update(anchorId, player)
   if madeAnchor ~= anchorId then removeAll(); madeAnchor = anchorId end
   for key, m in pairs(made) do
     if not want.tiles[key] then
-      local o = scenetree.findObjectById(m.id)
+      local o = m.id and scenetree.findObjectById(m.id)
       if o then o:delete() end
       made[key] = nil
     end
@@ -382,6 +466,12 @@ function M.update(anchorId, player)
   end
   tunnelHide = tunneledNow
   local n, nudge = 0, false
+  if fluidDirty and player then
+    for _, t in pairs(want.tiles) do
+      if inside(t, player) and player.z < t.z + 1 then nudge = true; break end
+    end
+  end
+  fluidDirty = false
   for key, r in pairs(want.rivers) do
     if not madeRivers[key] and not riversParked then
       if n >= M.CREATE_PER_FRAME then break end
@@ -454,7 +544,7 @@ end
 -- The wanted tiles and rivers are mapped (p_new = R*p + t, a tile's normal turned by R) and become newAnchorId's; the
 -- made blocks take their new place and tilt, the physics block its new place; rivers (splines in world coordinates)
 -- are made again from the mapped nodes. The server's next 'sea' message replaces the set as usual.
-function M.transform(xf, newAnchorId)
+function M.transform(xf, newAnchorId, anchor)
   local ox, oy, oz = xf:apply(0, 0, 0)
   local function turn(nx, ny)
     local nz = math.sqrt(math.max(0, 1 - nx * nx - ny * ny))
@@ -465,7 +555,7 @@ function M.transform(xf, newAnchorId)
     t.x, t.y, t.z = xf:apply(t.x, t.y, t.z)
     t.nx, t.ny = turn(t.nx or 0, t.ny or 0)
   end
-  if want and want.anchorId == madeAnchor then
+  if want and want.anchorId ~= newAnchorId then
     for _, t in pairs(want.tiles) do mapTile(t) end
     for _, r in pairs(want.rivers) do
       for _, n in ipairs(r.nodes) do n[1], n[2], n[3] = xf:apply(n[1], n[2], n[3]) end
@@ -478,7 +568,7 @@ function M.transform(xf, newAnchorId)
   end
   for key, m in pairs(made) do
     if m.t ~= (want and want.tiles or {})[key] then mapTile(m.t) end   -- (the same table as want's: mapped above)
-    local o = scenetree.findObjectById(m.id)
+    local o = m.id and scenetree.findObjectById(m.id)
     if o then
       local t = m.t
       local n = math.sqrt(t.nx * t.nx + t.ny * t.ny)
@@ -499,11 +589,31 @@ function M.transform(xf, newAnchorId)
     if o then o:setPosition(vec3(phys.x, phys.y, phys.z)) end
   end
   if madeAnchor ~= nil then madeAnchor = newAnchorId end
+  if rawWant and rawWant.anchorId ~= newAnchorId then
+    for _, t in pairs(rawWant.tiles) do
+      -- With no exclusions want shares these tables and they were already mapped above.
+      local shared = false; for _, w in pairs(want and want.tiles or {}) do if w == t then shared = true; break end end
+      if not shared then mapTile(t) end
+    end
+    for key, r in pairs(rawWant.rivers) do
+      if r ~= (want and want.rivers or {})[key] then
+        for _, p in ipairs(r.nodes) do p[1], p[2], p[3] = xf:apply(p[1], p[2], p[3]) end
+      end
+    end
+    rawWant.anchorId = newAnchorId
+  end
+  for _, r in pairs(guardRecords) do
+    for i, p in ipairs(r.record.nodes) do
+      if anchor then r.record.nodes[i] = { anchor:geodeticToWorld(unpack(r.geo.nodes[i])) }
+      else p[1], p[2], p[3] = xf:apply(p[1], p[2], p[3]) end
+    end
+  end
+  if next(guardRecords) then rebuildGuards() end
 end
 
 -- Disconnect, a new server session, mod unload: no tiles until the server says so again.
 function M.clear()
-  want = nil
+  want, rawWant = nil, nil
   M.riversVersion = M.riversVersion + 1
   removeAll()
 end

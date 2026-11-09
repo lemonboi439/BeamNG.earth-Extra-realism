@@ -5,7 +5,9 @@ fields exits / mileposts / merges / speeds (render-only shapes, pooled slots); t
 Every guide sign face is drawn to the US MUTCD (green guide panels, Interstate / US / state shields, the yellow merge
 diamond, Interstate mile markers): those are built where signstates finds a US state (BNE_SIGNS_WORLD=1: everywhere,
 for tests), elsewhere no sign data is asked for. The speed-limit signs (speedsigns.py, field speeds: the AI's limit, in
-each region's style) are built everywhere."""
+each region's style) are built everywhere. On German Autobahnen the German guide signs (deautobahn.py, field autobahn:
+the RWBA chain at every exit, Kreuz and Dreieck from the sign text mapped in OpenStreetMap) where Germany's shards
+carry it."""
 from runtimeprofiler import ThreadPoolExecutor
 import json
 import logging
@@ -22,6 +24,7 @@ import roads
 import signstates
 import dirsigns
 import speedsigns
+import roadsigns
 import staging
 
 log = logging.getLogger('earthd.signs')
@@ -89,11 +92,13 @@ def build_tile(md, frame, aid, tx, ty, elev, out_dir, vfs_dir, urban=None, width
 _warned = -float('inf')
 
 
-def _speeds(frame, tx, ty, elev, context, decks, left_hand, mph, face):
-    """speedsigns.build_tile, or None: optional scenery never stops the other signs."""
+def _speeds(frame, tx, ty, elev, context, decks, left_hand, mph, face, de_on=False, towns=None):
+    """speedsigns.build_tile, or None: optional scenery never stops the other signs (towns: the town signs' towns,
+    townentry.Towns.town_state, when they are on)."""
     global _warned
     try:
-        return speedsigns.build_tile(frame, tx, ty, elev, context, decks, left_hand, mph, face)
+        return speedsigns.build_tile(frame, tx, ty, elev, context, decks, left_hand, mph, face, de_on=de_on,
+                                     towns=towns)
     except Exception as error:
         now = time.monotonic()
         if now - _warned >= 60.:
@@ -171,6 +176,10 @@ class Tracker:
             self.stale.clear()
             self.retry.clear()
         self.wanted = set(ready)
+        # Readiness gates the first build, not the lifetime of visible signs.
+        # A road retry/refresh temporarily loses readiness; keep its signs until
+        # the player leaves, with the same unloading margin as the roads.
+        self.wanted.update(k for k in self.sent if roads.tile_distance(*k, x, y) <= roads.DROP_M)
         for key in self.sent - self.wanted:
             conn.send({'type': 'roads_drop', 'anchorId': aid, 'key': f's{key[0]}_{key[1]}'})
         self.sent.intersection_update(self.wanted)

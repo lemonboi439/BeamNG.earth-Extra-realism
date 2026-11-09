@@ -87,7 +87,7 @@ M.SCHEMA = {
   -- roads near the player (roads.lua; the server's --roads on)
   roads = { kind = 'bool', default = true, label = 'Roads' },
   -- exit, overhead and merge signs and Interstate mile markers along highways (roads.lua sign tiles; server
-  -- signstream.py, from cody196's PR #363); needs Roads
+  -- signstream.py, from cody196's PR #363), and the German Autobahn signs (server deautobahn.py); needs Roads
   highwaySigns = { kind = 'bool', default = true, label = 'Highway signs' },
   -- the 3D models of landmarks from the open library 3dmr.eu (server threedmr.py; cpupin.player_settings reads it from
   -- this file when the server starts): off leaves the procedural buildings there, the player's own local models stay
@@ -151,7 +151,7 @@ M.ORDER = { 'quality', 'framePacing', 'terrainDetail', 'groundPhoto', 'trees', '
   'devMapKm' }
 
 -- Stored but not on the settings page
-M.HIDDEN = { welcomeSeen = true, updateDismissed = true, devNoticeSeen = true, qualityDetected = true }
+M.HIDDEN = { welcomeSeen = true, updateDismissed = true, devNoticeSeen = true, qualityDetected = true, telemetryChoice = true }
 
 -- The quality presets: each sets these knobs at once ('high' = the defaults before presets existed, 2026-10-28). A
 -- Steam Deck on Handheld in a forest (Patapsco, 2026-10-28): low 37.0 fps, high 31.5, ultra 30.9; 'medium' (its first-run
@@ -662,6 +662,7 @@ end
 
 function M.uiSet(key, v) return M.set(key, v) end
 
+
 function M.uiReset()
   values = defaults()
   M.resolveAuto()                               -- (quality 'auto': the hardware's preset again)
@@ -728,6 +729,30 @@ function M.uiPlaceDelete(id) return placesCall(places.uiDelete, id) end
 function M.uiPlaceGo(id) return placesCall(places.uiGo, id) end
 function M.uiPlaceGoText(text) return placesCall(places.uiGoText, text) end
 function M.uiPlaceGoRecent(i, lat, lon) return placesCall(places.uiGoRecent, i, lat, lon) end
+
+-- The Add-ons page (EarthAddons.vue; addons.lua through beamngEarth_core._addons). Each answers a table; an error inside
+-- answers { ok = false, error }.
+function M.addonsCall(name, ...)
+  local core = ext('beamngEarth_core')
+  local a = core and core._addons
+  if not a then return { ok = false, error = 'BeamNG.Earth is not loaded' } end
+  local ok, res, why = pcall(a[name], ...)
+  if not ok then
+    log('W', 'beamngEarth', 'add-ons: ' .. tostring(res))
+    return { ok = false, error = 'Add-ons: ' .. tostring(res) }
+  end
+  if type(res) == 'table' then return res end
+  return { ok = res == true, error = why }
+end
+function M.uiAddons() return M.addonsCall('uiState') end
+function M.uiAddonsRefresh() return M.addonsCall('request', true) end
+function M.uiAddonOpen(id, refresh) return M.addonsCall('requestDetail', id, refresh) end
+function M.uiAddonDetail(id) return M.addonsCall('uiDetail', id) end
+function M.uiAddonInstall(id, agreed) return M.addonsCall('install', id, agreed) end
+function M.uiAddonManage(id, op) return M.addonsCall('manage', id, op) end
+function M.uiAddonAdd(repo) return M.addonsCall('add', repo) end
+function M.uiAddonForget(id) return M.addonsCall('forget', id) end
+function M.uiAddonOptions(id, values) return M.addonsCall('setOptions', id, values) end
 
 ------------------------------------------------------------------------------------------
 -- The world map (ui/ui-vue/mods/beamngEarth/EarthMap.vue: a route of its own, and a pause-menu
@@ -828,9 +853,14 @@ local function localWeatherBadge()
   local okW, weather = pcall(require, 'beamngEarth/weather')
   local m = okW and weather.current and weather.current()
   if not (sst and sst.localTime) and not m then return nil end
+  -- night: the game's sun under the horizon (its own clock: Real or Manual), else the weather message's isDay
+  local night = nil
+  if sst and sst.sunElev then night = sst.sunElev < sky.NIGHT_ELEV_DEG
+  elseif m and m.isDay ~= nil then night = not m.isDay end
   return {
     localTime = sst and sst.localTime or nil,
     code = m and m.code or nil,
+    night = night,
     tempC = m and (m.tempC or m.slTempC) or nil,
     metric = require('beamngEarth/gps').metric(),      -- (the game's unit: the badge's °C or °F)
   }
@@ -1063,10 +1093,18 @@ function M.mapControls(on)
     end
     pcall(pushActionMap, 'BigMap')
     local am = scenetree.findObject('BigMapActionMap')
-    if am then am.trapHandledEvents = false end      -- (as the stock map: nothing else gets stuck behind it)
+    if am then
+      -- A handled zoom must not reach the menu action map too: its filter bindings can change the cache view.
+      -- Unhandled menu navigation still passes through. Restore the map's previous policy on close.
+      mapCtl.actionMap, mapCtl.trapHandledEvents = am, am.trapHandledEvents
+      am.trapHandledEvents = true
+    end
   elseif not on and mapCtl then
     if mapCtl.vt then mapCtl.vt.onActionEvent = mapCtl.vtOrig end
-    for f, fn in pairs(mapCtl) do if f ~= 'bm' and f ~= 'vt' and f ~= 'vtOrig' then mapCtl.bm[f] = fn end end
+    -- (pcall: the action map may be gone by now, a level unload)
+    if mapCtl.actionMap then pcall(function() mapCtl.actionMap.trapHandledEvents = mapCtl.trapHandledEvents end) end
+    for _, f in ipairs({ 'camMoveController', 'camMoveKey', 'zoomInOut', 'controllerZoom', 'zoom',
+        'onControllerSelect', 'onChangeUiFilter' }) do mapCtl.bm[f] = mapCtl[f] end
     mapCtl = nil
     pcall(popActionMap, 'BigMap')
     if filter and filter.addAction then pcall(filter.addAction, 0, 'beamngEarthMapBlocked', false) end
@@ -1095,12 +1133,29 @@ end
 
 -- The key binding (actions/beamngEarth.json; M and the pause menu Map via redirectBigMap): open the map, or close it back to driving.
 function M.toggleMap()
+  local m3 = rawget(_G, 'beamngEarth_map3d')
+  if m3 and (m3.isActive() or (not mapOpen and M.get and M.get('mapStyle') == '3d')) then
+    m3.toggle()
+    return
+  end
   if mapOpen then
     M.navigate('play')
     mapOpen = false
   else
     M.navigate(M.MAP_ROUTE)
   end
+end
+
+-- The 2D map's "3D map" button: the 3D map instead, remembered as the map key's style from now on (the user,
+-- 2026-11-07: "have the game remember which map mode the player last switched to")
+function M.uiOpen3d()
+  local m3 = rawget(_G, 'beamngEarth_map3d')
+  if not m3 or not m3.enter then return { ok = false, error = 'the 3D map is not loaded' } end
+  pcall(M.set, 'mapStyle', '3d')
+  M.navigate('play')
+  mapOpen = false
+  m3.enter()
+  return { ok = true }
 end
 
 ------------------------------------------------------------------------------------------
@@ -1142,9 +1197,46 @@ function M.showWelcome()
   M.navigate(M.WELCOME_ROUTE)
 end
 
--- EarthWelcome.vue's buttons: seen.
-function M.uiWelcomeDone()
+-- The telemetry choice (TELEMETRY.md; the user, 2026-11-08: "give all players a popup and let them choose before
+-- playing"): the server sends nothing until telemetryChoice reaches the consent version its hello names. The defaults
+-- the welcome page shows are its region's (server privacyregion.py, from this computer's time zone): 'neutral' (nothing
+-- ticked: the EU / EEA, China, Russia, India, unknown), 'perf_off' (performance unticked), 'all'.
+M.privacyRegion = 'neutral'
+M.privacyKnown = false            -- (the hello came: before it, the page shows nothing ticked and asks again)
+M.telemetryConsent = 1
+function M.serverPrivacy(region, consent)
+  if region == 'neutral' or region == 'perf_off' or region == 'all' then M.privacyRegion = region; M.privacyKnown = true end
+  if type(consent) == 'number' and consent >= 1 then M.telemetryConsent = math.floor(consent) end
+  -- (a newer consent version than the one answered, learnt after the level started: the welcome page once more, once a
+  -- session; a player who chose under version 1 is asked again when the performance data starts, version 2)
+  local level = rawget(_G, 'getCurrentLevelIdentifier') and getCurrentLevelIdentifier()
+  if M.privacyNeeded() and not M._privacyAsked and level == M.LEVEL_ID and not welcomeAt then
+    M._privacyAsked = true
+    welcomeAt = os.clock() + M.WELCOME_DELAY_S
+  end
+end
+function M.privacyNeeded() return (values.telemetryChoice or 0) < M.telemetryConsent end
+
+-- { region, needed, telemetry, perf, net } for the welcome page: before a choice, the region's defaults
+function M.uiPrivacy()
+  if M.privacyNeeded() and (values.telemetryChoice or 0) == 0 then     -- (asked again: the boxes as they chose before)
+    local r = M.privacyRegion
+    local on = r ~= 'neutral' and values.telemetry ~= false       -- (a player who had switched it off: still off)
+    return { region = r, known = M.privacyKnown, needed = true, telemetry = on, net = on, perf = on and r == 'all' }
+  end
+  return { region = M.privacyRegion, known = M.privacyKnown, needed = M.privacyNeeded(), telemetry = values.telemetry ~= false,
+    net = values.telemetryNet ~= false, perf = values.telemetryPerf ~= false }
+end
+
+-- EarthWelcome.vue's buttons: seen, and the telemetry choice it shows (choice: { telemetry, perf, net }) made.
+function M.uiWelcomeDone(choice)
   if (values.welcomeSeen or 0) < M.WELCOME_VERSION then M.set('welcomeSeen', M.WELCOME_VERSION) end
+  if type(choice) == 'table' then
+    M.set('telemetry', choice.telemetry == true)
+    M.set('telemetryPerf', choice.telemetry == true and choice.perf == true)
+    M.set('telemetryNet', choice.telemetry == true and choice.net == true)
+    M.set('telemetryChoice', M.telemetryConsent)
+  end
   return { ok = true }
 end
 
@@ -1213,8 +1305,9 @@ function M.onClientPostStartMission()
   appliedView = nil
   M.applyAll()
   local level = rawget(_G, 'getCurrentLevelIdentifier') and getCurrentLevelIdentifier()
-  if level == M.LEVEL_ID and (values.welcomeSeen or 0) < M.WELCOME_VERSION then
-    welcomeAt = os.clock() + M.WELCOME_DELAY_S
+  if level == M.LEVEL_ID and ((values.welcomeSeen or 0) < M.WELCOME_VERSION or M.privacyNeeded()) then
+    welcomeAt = os.clock() + M.WELCOME_DELAY_S       -- (and until the telemetry choice is made: before playing)
+    M._privacyAsked = M.privacyNeeded() or nil
   end
 end
 

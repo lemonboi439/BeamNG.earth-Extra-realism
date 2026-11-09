@@ -60,15 +60,17 @@ def _named_init(name, init, *initargs):
 
 def _call(fn, args, kwargs):
     """A job in the worker, then its memory ceiling (budget.maybe_shed: on a small machine a worker over it drops its
-    caches between jobs)."""
-    try:
-        return fn(*args, **kwargs)
-    finally:
+    caches between jobs); never during an idle shed (budget.JOB_LOCK), whose clock it starts again."""
+    import budget
+    with budget.job_lock():
         try:
-            import budget
-            budget.maybe_shed()
-        except Exception:
-            pass
+            return fn(*args, **kwargs)
+        finally:
+            try:
+                budget.job_ended()
+                budget.maybe_shed()
+            except Exception:
+                pass
 
 
 def _shedding(submit):
@@ -123,9 +125,17 @@ class RespawningPool:
         visit the roads were never ahead of a car at 100 mph, nyc_speed.py --cold 2026-11-02): the job goes to the
         processes when one is free of the other jobs, or when no low job runs (never starved). Its future is running
         once handed over (result_running)."""
+        return self._queue_low(fn, args, kwargs, None)
+
+    def submit_low_lazy(self, fn, make_args):
+        """submit_low with fn's arguments made at its handover: make_args() -> (args, kwargs). Jobs asked for while it
+        waits can join it (Server.build_veg_geo: the trees geotiles waiting together go in one job)."""
+        return self._queue_low(fn, (), {}, make_args)
+
+    def _queue_low(self, fn, args, kwargs, make_args):
         outer = concurrent.futures.Future()
         with self._low_cv:
-            self._low.append((outer, fn, args, kwargs))
+            self._low.append((outer, fn, args, kwargs, make_args))
             if self._low_thread is None:
                 self._low_thread = threading.Thread(target=self._low_loop, daemon=True, name=f"{self.name}-low")
                 self._low_thread.start()
@@ -137,11 +147,13 @@ class RespawningPool:
             with self._low_cv:
                 while not (self._low and (self.inflight < self.workers or self._low_active == 0)):
                     self._low_cv.wait(timeout=1.0)
-                outer, fn, args, kwargs = self._low.popleft()
+                outer, fn, args, kwargs, make_args = self._low.popleft()
                 if not outer.set_running_or_notify_cancel():
                     continue                # (cancelled while it waited)
                 self._low_active += 1
             try:
+                if make_args is not None:   # (outside _low_cv: it may take its caller's lock)
+                    args, kwargs = make_args()
                 inner = self.submit(fn, *args, **kwargs)
             except BaseException as e:
                 with self._low_cv:

@@ -205,6 +205,7 @@
                      :config="cacheSelectConfig" @valueChanged="v => (cacheMode = v)" />
         </div>
       </div>
+      <button v-if="!embedded" class="map-btn" @click="open3d" title="The 3D map (experimental): fly over the real world like a map app">3D map</button>
       <button v-if="!embedded" class="map-btn close" @click="close" title="Close (Esc / M)">Close</button>
     </div>
 
@@ -594,7 +595,7 @@ const weatherBadge = computed(() => {
   // (in the game's unit, as the GPS distances: gps.lua's metric, Options > Display)
   const metric = !!w.metric
   const temp = w.tempC == null ? null : (metric ? `${Math.round(w.tempC)}°C` : `${Math.round(w.tempC * 9 / 5 + 32)}°F`)
-  return { icon: w.code != null ? mm.weatherIcon(w.code) : "", localTime: w.localTime || "", temp }
+  return { icon: w.code != null ? mm.weatherIcon(w.code, !!w.night) : "", localTime: w.localTime || "", temp }
 })
 
 const creditsFull = ref(false)          // the credits' whole text (else two lines)
@@ -1111,8 +1112,9 @@ const cacheEl = ref(null)
 const cacheOn = ref(stored("beamngEarth.map.cache", "0") === "1")
 const storedCacheMode = stored("beamngEarth.map.cacheMode", "summary")
 const cacheMode = ref(mm.CACHE_MODES.includes(storedCacheMode) ? storedCacheMode : "summary")
-watch(cacheOn, on => store("beamngEarth.map.cache", on ? "1" : "0"))
-watch(cacheMode, v => store("beamngEarth.map.cacheMode", v))
+// Persist before a same-tick map close disposes the component's queued watchers.
+watch(cacheOn, on => store("beamngEarth.map.cache", on ? "1" : "0"), { flush: "sync" })
+watch(cacheMode, v => store("beamngEarth.map.cacheMode", v), { flush: "sync" })
 const cacheModeOptions = mm.CACHE_MODES.map(v => ({ label: mm.CACHE_MODE_NAMES[v], value: v }))
 const cacheSelectConfig = { value: o => o.value, label: o => o.label }
 const cacheGrid = ref(null)               // { z, x0, y0, w, h, cells: Uint8Array, mode }
@@ -1569,6 +1571,10 @@ function onContext(ev) {
 function closeCtx() { ctx.value = null }
 // picked from the right-click menu: straight away (a second "Teleport here?" with the same choices was one click too
 // many, the user 2026-10-14); a failure shows in the confirmation box
+// the 3D map instead (settings.uiOpen3d: remembered as the map key's style)
+// (a statement: without a callback the game runs the text as a chunk, where a bare "a and b() or nil" expression is a
+// syntax error, the "fatal Lua error" of the 3D map button, 2026-11-08)
+function open3d() { engineLua("if beamngEarth_settings and beamngEarth_settings.uiOpen3d then beamngEarth_settings.uiOpen3d() end") }
 function ctxTeleport() {
   if (!ctx.value || state.value.cannotGo) return
   const c = ctx.value

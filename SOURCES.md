@@ -22,6 +22,14 @@ A few things hold for all of them:
 
 ## Map data: roads, buildings, water, land use
 
+On a network with no IPv4 route (IPv6-only, no NAT64), the public AWS S3 sources below switch to their regional
+dual-stack endpoint (`s3.dualstack.<region>.amazonaws.com`, IPv4 and IPv6) after the first IPv4 connection finds no
+route; everywhere else they are used as listed. The source names remain the identities for download budgets, status,
+cached files and `NO_PROXY`. Signed URLs, requests with an Authorization header and proxied requests keep their
+original endpoint. Other providers still need their own IPv6 support.
+For the OpenStreetMap keys read by the server and weekly data builders, see the
+[OSM tag inventory](docs/OSM_TAGS.md) and [Taginfo project file](docs/taginfo.json).
+
 | Source | Address | What it builds | If it does not answer | Status line |
 |---|---|---|---|---|
 | Overture Maps (map data releases) | `overturemaps-us-west-2.s3.us-west-2.amazonaws.com` | Every road and railway line, every building (footprint, height, roof shape where mapped), water areas, rivers, land use (parks, farmland, industrial areas), bridges and tunnels as mapped, gas stations, airports' surroundings, and the town, state and country names in the status bar. Read in small ranges of large files: only the part around you. | Places you have not visited before come without roads, buildings or water (and the status bar without the town name) until it answers. Places you have visited load from disk. | named |
@@ -62,7 +70,7 @@ Connecticut (`cteco.uconn.edu`), Massachusetts (`tiles.arcgis.com`), Washington 
 Indiana (`di-ingov.img.arcgis.com`), Ohio (`maps.ohio.gov`), North Carolina (`services.nconemap.gov`),
 Pennsylvania (`imagery.pasda.psu.edu`), Virginia (`vginmaps.vdem.virginia.gov`), New York State
 (`orthos.its.ny.gov`), New Jersey (`maps.nj.gov`), Delaware (`imagery.firstmap.delaware.gov`), Vermont
-(`maps.vcgi.vermont.gov`), Switzerland (`wmts.geo.admin.ch`), France (`data.geopf.fr`), Spain
+(`maps.vcgi.vermont.gov`), Switzerland (`wmts.geo.admin.ch`), France (`data.geopf.fr`), Portugal (`cartografia.dgterritorio.gov.pt`), Spain
 (`tms-pnoa-ma.idee.es`), the Netherlands (`service.pdok.nl`), Luxembourg (`wmts1.geoportail.lu`), Austria
 (`maps.wien.gv.at`), South Tyrol (`geoservices.buergernetz.bz.it`), Italy (`wms.pcn.minambiente.it`), Poland
 (`mapy.geoportal.gov.pl`), Czechia (`ags.cuzk.gov.cz`), Estonia (`tiles.maaamet.ee`), Flanders
@@ -85,6 +93,7 @@ Baden-Wurttemberg (`owsproxy.lgl-bw.de`), Lower Saxony (`opendata.lgln.niedersac
 |---|---|---|---|---|
 | OpenStreetMap wind turbines, distributed by GMWID / Geomermaids | Bundled index; no gameplay requests | Mapped individual turbines worldwide, with installed stock animated shapes. OSM snapshot 2026-10-31; source, license and refresh details in `server/wind_turbines.provenance.json`. | Gameplay uses the bundled copy offline. If the index is missing or damaged, only the verified Happy Jack fallback remains and the server logs a warning. | no runtime host |
 | BeamNG.Earth's weekly data (GitHub Pages) | `tecnagamer.github.io` | Built every week from the whole OpenStreetMap planet by this project: railway details (track gauge, electrification, disused and abandoned lines, level crossings and their barriers) and, in the US, the Federal Railroad Administration's list of the gates, lights and crossbucks at each level crossing. | Railways keep their basic class; level crossings get equipment by road size. | optional |
+| Germany's measured roofs (GitHub Pages) | `tecnagamer.github.io` | The shape and height of each building in Germany, from the states' open LoD2 models, reduced by this project to a small file per ~25 km. Fetched once per area, in Germany only. | The roofs are predicted, as everywhere else. | named |
 | OurAirports | `davidmegginson.github.io` | Airports and their runways (position, length, width, surface), for paved runways and levelled airfields. Fetched about once a week. | The copy on disk is used. | named |
 | 3D Model Repository | `3dmr.eu` | 3D models of landmarks (the Eiffel Tower, the Dragon Bridge in Da Nang, ...) where the map links one: the models near you are looked up and downloaded once, then kept in the cache. Off on the settings page ("3D models from 3dmr.eu"). | The usual buildings and bridges stay there; asked again on a later visit. | optional |
 | OpenStreetMap API | `api.openstreetmap.org` | The outline of the building a 3dmr.eu model stands on, read once per model to turn the model the way the building faces. | The model is placed as downloaded. | optional |

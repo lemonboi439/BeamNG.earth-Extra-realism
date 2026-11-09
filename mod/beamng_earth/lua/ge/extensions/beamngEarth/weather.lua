@@ -554,7 +554,8 @@ local function applyPrecip(e, c)
   local alt = e.getCloudAltitudeKm and tonumber(e.getCloudAltitudeKm())
   local cz = cameraZ()
   if alt and cz and cz > alt * 1000 then rain, snow = 0, 0 end
-  M.rainNow = rain                          -- (its sound: ambience.lua)
+  M.rainNow = rain                          -- (its sound: ambience.lua; api.weather)
+  M.snowNow = snow
   drivePrecip(M.RAIN_NAME, rain, M.RAIN_POOL)
   drivePrecip(M.SNOW_NAME, snow, M.SNOW_POOL)
 end
@@ -695,6 +696,7 @@ end
 local function hidePrecip()
   for name in pairs(S.precip) do pcall(drivePrecip, name, 0, 0) end
   M.rainNow = 0
+  M.snowNow = 0
   pcall(restoreSun)
 end
 
@@ -749,6 +751,21 @@ local function update(dt)
     S.groundTimer = 0
     local p = playerPos()
     if p then S.groundZ = groundUnder(p) or S.groundZ end
+  end
+  -- the 3D map high up: no fog, no clouds, whatever the weather mode or the map's own pause (apply below may not run:
+  -- the fog stayed at the level's 4e-5 and the screen went grey from orbit, 2026-11-07)
+  S.mapTimer = (S.mapTimer or 0) + dt
+  if S.mapTimer >= 0.25 then
+    S.mapTimer = 0
+    local m3 = rawget(_G, 'beamngEarth_map3d')
+    if m3 and m3.isActive and m3.isActive() then
+      local camH = cameraOverGround()
+      hideCloudsHigh(camH)
+      if camH and camH >= M.FOG_FADE_TO_M then
+        local have = e.getFogDensity and tonumber((e.getFogDensity()))
+        if not have or have ~= 0 then envCall(e.setFogDensity, 0) end
+      end
+    end
   end
   if S.clock < S.graceUntil or S.mission then return end
   S.gravTimer = S.gravTimer + dt
