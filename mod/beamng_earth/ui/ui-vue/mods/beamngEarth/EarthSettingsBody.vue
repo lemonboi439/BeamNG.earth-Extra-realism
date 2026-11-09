@@ -25,9 +25,6 @@
       </div>
     </template>
 
-    <!-- Add-ons: the page is the add-ons' own view (EarthAddons.vue) -->
-    <EarthAddons v-if="category.addons" />
-
     <BngRow
       v-for="item in rows"
       :key="item.id"

@@ -57,8 +57,7 @@ WINDOWS_GAME_GONE_S = 8     # Windows has no Steam container restart gap; prompt
                             # launcher closed with the game still running, 2026-11-05: see game_pids)
 GAME_START_S = 180          # waiting for the game's process after asking Steam
 SERVER_START_S = 120        # imports/startup must finish before the game is launched
-PROCESS_QUERY_S = 10        # a process query under 100 % server load took over 3 s and the launcher read the game as
-                            # closed, stopping its server (Old Kent Road, 2026-11-06): a stuck query may not hang it
+PROCESS_QUERY_S = 3         # a stuck process query must not hang the launcher
 GAME_QUERY_S = 10           # tasklist for the game: slow on a loaded machine (the game and the server on 6 cores)
 DIRECT_FAIL_S = 20          # a direct start that ends this soon did not work (no Steam client): through Steam
 
@@ -522,18 +521,15 @@ def game_pids():
         # bytes, decoded leniently: on a non-English Windows tasklist's "no tasks" message is in the console's code
         # page (German "ü" = 0x81 in cp850), which text=True's cp1252 could not decode (a player's report,
         # 2026-10-17: the launcher stopped with UnicodeDecodeError and r.stdout None)
-        # (None, not []: a query that failed or ran out of time does not say the game is gone.)
-        r = None
-        for _attempt in range(2):
-            try:
-                r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {GAME_EXE_WIN}", "/FO", "CSV", "/NH"],
-                                   capture_output=True, timeout=GAME_QUERY_S)
-                break
-            except subprocess.TimeoutExpired:
-                continue
-            except OSError:
-                return None
-        if r is None:               # (both queries timed out under load: unknown, not "closed")
+        # (None, not []: a query that failed or ran out of time does not say the game is gone. A player's launcher,
+        # 1.8.1 on a French Windows 11, i5-8600K: it closed and stopped the world server a few minutes in with the
+        # game still running, the next start the same; one slow tasklist under load was "no game" for the 3 s grace)
+        try:
+            r = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {GAME_EXE_WIN}", "/FO", "CSV", "/NH"],
+                               capture_output=True, timeout=GAME_QUERY_S)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if r.returncode != 0:
             return None
         text = (r.stdout or b"").decode("utf-8", errors="replace")
         out = []
@@ -1631,9 +1627,6 @@ def main():
     ap.add_argument("--no-terminal", action="store_true", help="Linux: no terminal window (log to a file)")
     ap.add_argument("--no-update-check", action="store_true",
                     help="do not ask GitHub for a newer BeamNG.Earth before the game starts")
-    ap.add_argument("--low-ram", action="store_true",
-                    help="fewer road/far workers and a 1.4 GB per-worker cache shed: for a 32 GB PC sharing its RAM "
-                         "with realistic traffic (the server otherwise holds 13-25 GB)")
     ap.add_argument("extra", nargs=argparse.REMAINDER, help="after --: more options for the server")
     args = ap.parse_args()
     if IS_WIN:
@@ -1901,10 +1894,6 @@ def run(args):
                 "Close its window (or end 'BeamNG.Earth' in the task manager), then start again.")
         sys.exit(1)
     log_path = os.path.join(data_dir(), "logs", "server.log")
-    if args.low_ram:
-        os.environ["BNGE_SHED_MB"] = "1400"
-        os.environ["BNGE_MAX_BASE_PX"] = "2048"
-        extra = ["--workers", "2", "--road-processes", "2"] + extra
     server = start_server(user_dir, extra, log_path, game_running=bool(running))
     beammp = None
     try:

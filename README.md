@@ -40,6 +40,10 @@ real curvature of the Earth.
   cache is split into **tiles**, **props/foliage** and **textures** buckets that are counted and can
   be cleared independently on the Storage page.
 
+**1.9 merge:** this line now carries upstream `1.9.0-beta.dev.292` in its history. The fork's engine
+files (roads, rail, earthd, grading, settings) are kept whole where 1.9 rewrote the same files, so
+the 1.9-only modules that depend on those rewrites are present but not fully wired yet.
+
 Status: the changes above are code-verified and unit-tested (the rail and tunnel suites pass); in-game
 validation is in progress. Known partial areas: pavement corner joins are short straight links rather
 than full mitred corners; switch routing is a merged route rather than selectable turnout collision;

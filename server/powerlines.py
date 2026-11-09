@@ -7,13 +7,9 @@ reach a substation (Overture infrastructure class substation areas; no towers in
 West Coast USA's switchgear (its yard's parts as a kit, a smaller one where it does not fit) and fenced with chain link.
 The layouts in Rust (earthfast.power_line_layout, earthfast.substation_yard).
 """
-import logging
-
 import numpy as np
 
 import fast
-
-log = logging.getLogger("earthd.powerlines")
 
 G_PYLON = "pylon"
 # Lines under HV_MIN_V stand on poles, not the 36 m lattice tower: a 66 kV line runs on poles along the street in town
@@ -203,11 +199,8 @@ def _off_roads(frame, md, e, n, ll, clear_m=None):
         p = np.array([e[i], n[i]])
         if not lines or _margin(p[None], lines, clear_m)[0] >= 0.0:
             continue
-        # One native call per tower: pack its nearby segments once, then test the ordered search without
-        # allocating a candidate-by-segment matrix for every road (a warm city tile's measured Python hot path).
-        ends = np.cumsum([len(line) - 1 for line, _ in lines], dtype=np.int64)
-        segments = np.empty((int(ends[-1]), 5), np.float64)
-        at = 0
+        # straight away from the nearest road
+        best = None
         for line, hw in lines:
             a, b = line[:-1], line[1:]
             ab = b - a
@@ -236,19 +229,6 @@ def tile_lines(frame, tx, ty, md, elev, props, wires, clearance=None):
     import roads
     if md is None:
         return
-    got_props, got_wires = [], []
-    try:
-        _tile_lines(frame, tx, ty, md, elev, got_props, got_wires, clearance)
-    except OSError as e:
-        log.warning("power lines: tile %s_%s left out: %s: %s", tx, ty, type(e).__name__, e)
-        return
-    props.extend(got_props)
-    wires.extend(got_wires)
-
-
-def _tile_lines(frame, tx, ty, md, elev, props, wires, clearance):
-    """tile_lines' layout, into props / wires (fresh lists: tile_lines adds them on success)."""
-    import roads
     x0, y0, x1, y1 = roads.tile_bbox(tx, ty)
     cells = roads.cells_of_tile(frame, tx, ty, margin=MAX_SPAN_M / 4)
     lines, poles, seen = [], [], set()

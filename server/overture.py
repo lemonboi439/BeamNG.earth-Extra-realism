@@ -18,9 +18,7 @@ their position), connectors (transportation/connector), buildings (buildings/bui
 min_height, floors, roof and facade fields, class), water and land_use (base: subtype, class,
 tags), infrastructure (base: power lines and plants, towers, barriers, bridges...), places (points of interest),
 divisions and division_areas (the status bar's towns, states and countries, placenames.py: a spec with "geometry":
-False reads no geometry column, its features are points at their bbox centres; "where" filters the rows),
-town_areas and town_points (the same theme's areas with their outlines and its villages: the town signs,
-townsigns.py; a layer's `simplify` thins the counties' outlines). Rows are
+False reads no geometry column, its features are points at their bbox centres; "where" filters the rows). Rows are
 deduplicated by id (highest version) and sorted by id, so a cell's content does not depend on
 which file or row group a feature came from, or in which order they were read. Water and land-use
 polygons are clipped to the cell (an ocean or a national park would otherwise repeat its whole
@@ -102,10 +100,6 @@ THEME_LICENCES = {
               "Copyright 2024 Foursquare Labs, Inc. All rights reserved. Available under Apache 2.0. Foursquare data "
               "was transformed to the Overture schema. Changed: 2026-03-18. NOTICE.txt. Data from AllThePlaces. "
               "Available under CC0 1.0.",
-    # (read 2026-10-28)
-    "divisions": "ODbL. © OpenStreetMap contributors. Available under the Open Database License. geoBoundaries. "
-                 "Available under CC BY 4.0. Esri Community Maps contributors. Available under CC BY 4.0. Land "
-                 "Information New Zealand (LINZ). Available under CC BY 4.0.",
 }
 
 _SRC = "sources[1].dataset AS src_dataset, sources[1].record_id AS src_record"
@@ -118,28 +112,6 @@ _SRC_OWN = f"{_OWN}.dataset AS src_dataset, {_OWN}.record_id AS src_record"
 _NAME = "names.\"primary\" AS name"
 _TAGS = "CAST(to_json(source_tags) AS VARCHAR) AS tags"
 DIVISION_LANGS = ("en", "de", "fr", "it")
-# the regional languages of France whose names a town sign may add under the French one (townsigns.REGIONAL: Catalan,
-# Occitan, Basque, Breton, Corsican, Alsatian, West Flemish), each a column name_<code> (names.common's, by its
-# language code)
-# (lb: Luxembourg's second line; dsb, hsb, frr: Lower and Upper Sorbian, North Frisian, Germany's; fur, sc: Friulian
-# and Sardinian, Italy's; fy: West Frisian, Friesland's; cy, gd: Welsh and Scottish Gaelic, Great Britain's; ga: Irish)
-REGIONAL_LANGS = ("ca", "oc", "eu", "br", "co", "gsw", "vls", "lb", "dsb", "hsb", "frr", "fur", "sc", "fy", "cy", "gd",
-                  "ga")
-# ... and the Latin forms of a Cyrillic or Greek name the signs write under it (townsigns.latin_name): Serbian's own
-# (sr-Latn: Beograd, not the English Belgrade), and the name's first alternate of no language (Sofia, Skopje, Štip,
-# Thessaloniki), as columns name_srlatn and name_alt
-_REGIONAL = ", ".join([f"map_extract(names.common, '{k}')[1] AS name_{k}" for k in REGIONAL_LANGS]
-                      + ["map_extract(names.common, 'sr-Latn')[1] AS name_srlatn",
-                         "list_filter(names.rules, r -> r.variant = 'alternate' AND r.language IS NULL)[1].value "
-                         "AS name_alt", "map_extract(names.common, 'en')[1] AS name_en"])
-# (name_en: a small place's English name is its transliteration, Kalabaka: when it has no alternate, Kalambaka
-# 2026-10-30)
-LATIN_COLS = ("name_srlatn", "name_alt", "name_en")
-# the countries whose communes are Overture counties or localadmins (Luxembourg, Portugal, Denmark, Estonia,
-# Lithuania, Romania, Bulgaria, Greece, Norway, Iceland, Albania, Kosovo, Belarus' cities; Switzerland's, Czechia's
-# and Slovakia's municipalities): their outlines are not simplified (a `simplify` layer's `whole`), they are where the
-# signs stand
-COUNTY_COMMUNES = ("LU", "PT", "CH", "CZ", "SK", "DK", "EE", "LT", "RO", "BG", "GR", "NO", "IS", "AL", "XK", "BY")
 LAYERS = {
     "roads": dict(theme="transportation", type="segment", clip=False,
                   cols=f"subtype, class, subclass, {_NAME}, {_SRC_OWN}",
@@ -232,7 +204,6 @@ LAYERS = {
                         where="subtype = 'road' AND class IN ('motorway', 'trunk', 'primary', 'secondary', 'tertiary') "
                               "AND routes_txt <> ''"),
 }
-SIMPLIFY_DEG = 0.002            # degrees (~200 m): a `simplify` layer's tolerance
 # road_flags: one row per flag (is_bridge, is_tunnel, is_link, is_covered, ...)
 # speed_limits: max speed in km/h (mph converted) per range
 MPH = 1.609344
@@ -770,12 +741,6 @@ class Reader:
             keep = np.array(keep, bool)
         else:
             keep = np.ones(len(rows), bool)
-        if spec.get("simplify"):
-            col, values = spec["simplify"]
-            whole = spec.get("whole", ())
-            for i, r in enumerate(rows):
-                if r[at[col]] in values and geoms[i][0] == mg.POLYGON and r[at["country"]] not in whole:
-                    geoms[i] = (mg.POLYGON, mg.simplify_polygon_parts(geoms[i][1], SIMPLIFY_DEG))
         feats = mg.build(layer, ids[keep], [g for g, k in zip(geoms, keep) if k])
         feats.clipped = clipped[keep]
         fmap = np.cumsum(keep) - 1          # old feature index -> new (rows dropped by clipping: unused)

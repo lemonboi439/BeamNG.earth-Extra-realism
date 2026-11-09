@@ -1,6 +1,5 @@
 """Mapped chain-link fences and noise walls (fences.py)."""
 import json
-import math
 import os
 import sys
 import unittest
@@ -41,18 +40,15 @@ class PlaceTest(unittest.TestCase):
     def setUp(self):
         self.frame = geodesy.EnuFrame(39.2834, -76.5934, 0.0)
 
-    def line(self, cls, tags, xy, fid="line-1", level=None):
+    def line(self, cls, tags, xy, fid="line-1"):
         xy = np.asarray(xy, np.float64)
         lat, lon, _ = self.frame.enu_to_geodetic(xy[:, 0], xy[:, 1], np.zeros(len(xy)))
-        attrs = {"subtype": np.array(["barrier"]), "class": np.array([cls]),
-                 "tags": np.array([json.dumps(tags)])}
-        if level is not None:
-            attrs["level"] = np.array([level], np.float64)
         return mapgeom.Features(
             layer="infrastructure", ids=np.array([fid]), kind=np.array([mapgeom.LINE], np.uint8),
             part_off=np.array([0, 1], np.int64), ring_off=np.array([0, 1], np.int64),
             coord_off=np.array([0, len(xy)], np.int64), lonlat=np.column_stack((lon, lat)),
-            attrs=attrs)
+            attrs={"subtype": np.array(["barrier"]), "class": np.array([cls]),
+                   "tags": np.array([json.dumps(tags)])})
 
     def point(self, cls, xy, fid="point-1", tags=None):
         lat, lon, _ = self.frame.enu_to_geodetic(np.array([xy[0]]), np.array([xy[1]]), np.zeros(1))
