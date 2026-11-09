@@ -626,7 +626,7 @@ def _roads_tile_cached(aid, lat, lon, zoom, tx, ty, out_dir, vfs_dir, sidewalks,
                     bool(buildings), bool(left_hand), bool(mph), None if q is None else float(q), bool(gas_stations),
                     _s.md.versions() if _s.md is not None else None, float(buried), lamp_region, country,
                     threedmr.FEATURE_VERSION, threedmr.local_signature(os.path.dirname(out_dir)),
-                    bool(roadsmod.ROAD_SURFACE))
+                    bool(getattr(roadsmod, "ROAD_SURFACE", True)))
     wh = _where_enu(lat, lon, *roadsmod_tile_bbox(tx, ty),
                     sidewalks=bool(sidewalks), lift=float(lift), buildings=bool(buildings),
                     gas_stations=bool(gas_stations), md=_md_versions())
@@ -1199,7 +1199,7 @@ def _geo_content_key(key, zoom, buildings, left_hand, mph, gas_stations, buried,
     import threedmr
     return revisit.key("roadsg", str(key), int(zoom), bool(buildings), bool(left_hand), bool(mph), bool(gas_stations),
                        _md_versions() if md is None else md, float(buried), lamp_region, country, GEO_SKIN_MARGIN_M,
-                       threedmr.FEATURE_VERSION, threedmr.local_signature(models_dir), bool(roadsmod.ROAD_SURFACE))
+                       threedmr.FEATURE_VERSION, threedmr.local_signature(models_dir), bool(getattr(roadsmod, "ROAD_SURFACE", True)))
 
 
 def prebuild_geo(gx, gy, zoom, scratch, buildings, left_hand, mph, gas_stations, buried=0.0, lamp_region=None,

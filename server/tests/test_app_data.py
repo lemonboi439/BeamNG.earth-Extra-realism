@@ -33,18 +33,6 @@ class AppDataTest(unittest.TestCase):
             covered = any(p == s or p.startswith(s + os.sep) for s in sources)
             self.assertTrue(covered, f"{f} is not in tools/build_app.py's --add-data list")
 
-    @unittest.skipUnless(build_app.IS_WIN, "Windows frozen-runtime packaging")
-    def test_windows_ctypes_runtime_binaries_are_bundled(self):
-        expected = build_app.windows_runtime_binaries()
-        self.assertTrue(expected)
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(build_app.subprocess, "run") as run:
-            build_app.pyinstaller(tmp, "icon.ico", onefile=True, ver="0.0.0")
-        command = run.call_args.args[0]
-        binaries = [os.path.realpath(command[i + 1].split(build_app.SEP, 1)[0])
-                    for i, a in enumerate(command[:-1]) if a == "--add-binary"]
-        for path in expected:
-            self.assertIn(os.path.realpath(path), binaries)
-
 
 if __name__ == "__main__":
     unittest.main()

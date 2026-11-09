@@ -45,6 +45,8 @@ log = logging.getLogger("earthd.roads")
 VERSION = 1
 TILE = 256.0            # m, tile side in the anchor frame
 SEND_M = float(os.environ.get("BNE_ROADS_SEND_M", "640"))     # tiles whose square comes this close to the player
+WARM_M = float(os.environ.get("BNE_ROADS_WARM_M", "256"))     # a place's first load: only the tiles this close are
+                            # started until they are in, then the rest of SEND_M (the car's roads first)
                                                                 # (Euclidean, tiles_near: a disc) are sent
 DROP_M = float(os.environ.get("BNE_ROADS_DROP_M", str(SEND_M + 320)))   # ... and dropped beyond this
 OVERLAP = 2.0           # m a road reaches past its tile's edge (no gap at tile seams)
@@ -52,7 +54,7 @@ SIMPLIFY_M = 0.25       # RDP tolerance (Road Spline's layerMgr)
 SIMPLIFY_Z_M = 0.05     # ... and the vertical one of lines drawn at their own heights (decks, tunnels: simplify ztol)
 MAX_NODES = 100         # nodes per DecalRoad (Road Spline's chunk size)
 MAX_SPACING = 12.0      # m between nodes at most (official maps: median 11-12 m)
-BUILD_PER_POSE = 4      # tiles started per pose at most
+BUILD_PER_POSE = 6      # tiles started per pose at most (3 road processes: 3 run while 3 wait, near first)
 # At speed the tiles reach along the car's path (the user, 2026-10-19: "Going high speeds the road texture can struggle
 # to keep up ... even if we have to sacrifice some things further away from the car"): above FAST_MS the tiles within
 # CORRIDOR_M of the path ahead are wanted too, up to LEAD_S of driving (LEAD_MAX_M at most), and every wanted tile is
@@ -10827,6 +10829,7 @@ class GeoTracker:
         self.started = {}
         self.stuck_said = set()
         self.car = set()
+        self.warm_done = False  # the WARM_M tiles are in: the rest of SEND_M may start (GeoTracker.on_pose)
         self.empty = set()      # (anchor tiles' interface: progress)
         self.stats = {"content": 0, "skins": 0, "exact": 0, "exact_base": 0, "anchors": 0,
                       "content_cpu": 0.0, "skin_cpu": 0.0}
@@ -10929,6 +10932,7 @@ class GeoTracker:
                 del self.frames[old]
             self.skins, self.retry, self.fails, self.started, self.stuck_said = set(), {}, {}, {}, set()
             self.need = {}
+            self.warm_done = False
             self.stats["anchors"] += 1
         if self.pool is None:
             from runtimeprofiler import ThreadPoolExecutor
@@ -10945,6 +10949,13 @@ class GeoTracker:
                 others.setdefault((a, b), d)
         wanted = set(car) | set(seen) | set(others)
         start = {(a, b) for a, b, _ in geotiles.tiles_near(frame, x, y, SEND_M)} if ground_busy else wanted
+        if not self.warm_done:
+            # a place's first load: the car's tiles first (the ground's painted roads are there with the terrain);
+            # the rest of SEND_M waits until these are in, so the 3 road processes are not strung out over 25 tiles
+            near = {k for k in start if car.get(k, 1e9) <= WARM_M}
+            if near:
+                start = near
+            self.warm_done = all((k in self.sent and k in self.skins) or k in self.retry for k in car if car[k] <= WARM_M)
         now = time.monotonic()
         jobs = []
         for k in start:
@@ -11206,7 +11217,7 @@ def sound_boxes(chunks):
 def write_tile(out_dir, vfs_dir, aid, tx, ty, chunks, walks=None, road_mesh=None, deck_mesh=None, bld=None,
                props=None, wires=None, park=None, tunnel_mesh=None, fuel=None,
                rail_mesh=None, garage_sound=(), wells=(), guardrail_rows=None, custom_entries=None, decals=True,
-               bld_none=False, barrier_mesh=None, barrier_chunks=(), turbines=(), signs=None, towns=None):
+               bld_none=False, barrier_mesh=None, barrier_chunks=(), rail_tunnel=None, rail_tube=(), turbines=(), signs=None, towns=None):
     """Write a tile's chunks (atomically), its sidewalk mesh (walks: build_tile's runs, if any:
     `walks_<a>_<tx>_<ty>.cdae`, announced in the tile as "walk": {shape, pos}) and its road mesh
     (road_mesh: roadmesh.build's result: `road_<a>_<tx>_<ty>.cdae`, "road": {shape, pos}; the mod then
@@ -11228,7 +11239,7 @@ def write_tile(out_dir, vfs_dir, aid, tx, ty, chunks, walks=None, road_mesh=None
     guards = {c["waterguard"]["id"]: c["waterguard"] for c in chunks if c.get("waterguard")}
     if guards:
         data["waterguard"] = [guards[k] for k in sorted(guards)]
-    sound = sound_boxes(chunks) + list(garage_sound)      # (garage_sound: buildings.garage_sound_boxes)
+    sound = sound_boxes(list(chunks) + list(rail_tube)) + list(garage_sound)      # (rail_tube: rail tunnels' bores)
     if sound:
         data["sound"] = sound
     if wells:                                               # oil wells' pump jacks (oilwells.tile_wells)
@@ -11266,6 +11277,11 @@ def write_tile(out_dir, vfs_dir, aid, tx, ty, chunks, walks=None, road_mesh=None
             cdae.write(os.path.join(out_dir, shape), col[0], col[1], uvs=col[2], material=col[3],
                        tri_materials=col[4], collision_only=True)
             data["railcol"] = {"shape": f"{vfs_dir}/{shape}", "pos": [x0, y0, 0.0]}
+    if rail_tunnel is not None:     # railways.tile_mesh's tube chunks through roadmesh.tunnel: bores and portals
+        x0, y0, _, _ = tile_bbox(tx, ty)
+        shape = f"railtunnel_{aid}_{tx}_{ty}.cdae"
+        roadmesh.write(os.path.join(out_dir, shape), rail_tunnel)
+        data["railtunnel"] = {"shape": f"{vfs_dir}/{shape}", "pos": [x0, y0, 0.0]}
     if signs:
         x0, y0, _, _ = tile_bbox(tx, ty)
         shape = f"signs_{aid}_{tx}_{ty}.cdae"

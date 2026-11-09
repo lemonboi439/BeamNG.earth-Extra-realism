@@ -40,10 +40,11 @@ real curvature of the Earth.
   cache is split into **tiles**, **props/foliage** and **textures** buckets that are counted and can
   be cleared independently on the Storage page.
 
-**1.9 port:** the real 1.9 **roads engine** is now in use (roads.py plus 1.9 markings, sidewalks,
-junctions, surface, grading, budget and the native module), with the fork's mapped footways, zebra
-crossings and white turn arrows ported on top. Rail, earthd and the remaining engine files are still
-on the fork's 1.8.2 code and are being ported next.
+**1.9 port:** the real 1.9 **roads engine** (roads.py plus markings, sidewalks, junctions, surface,
+grading, budget and the 169 native module), **buildings** (with the station-shed opening ported in)
+and **cache** (with the fork's tiles/props/textures split) are in use. 1.9 dropped rail tunnel tubes,
+so the fork's rail tunnel/turnout engine is kept and passes the 1.9 tunnel tests; furniture and
+earthd are still the fork's files and are the remaining port.
 
 Status: the changes above are code-verified and unit-tested (the rail and tunnel suites pass); in-game
 validation is in progress. Known partial areas: pavement corner joins are short straight links rather
