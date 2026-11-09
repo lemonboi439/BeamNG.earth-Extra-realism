@@ -54,9 +54,10 @@
     "version": 1.5,
     "Stages": [
       {
-        "baseColorMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_b.color.dds",
-        "normalMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_nm.normal.dds",
-        "roughnessMap": "/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_concrete_r.data.dds",
+        "baseColorMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_b.color.png",
+        "normalMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_nm.normal.png",
+        "roughnessMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_r.data.png",
+        "ambientOcclusionMap": "/assets/materials/tileable/concrete/concrete_plain/t_concrete_plain_ao.data.png",
         "baseColorFactor": [
           0.78,
           0.75,

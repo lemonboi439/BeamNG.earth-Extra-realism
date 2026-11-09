@@ -54,10 +54,13 @@ export const settingsSchema = [
       { id: "clouds", type: "bool", default: true, name: "Clouds", desc: "A volumetric cloud layer that follows the ground under you." },
       { id: "realGravity", type: "bool", default: true, name: "Real gravity", desc: "Gravity as it really is where you are (it varies a little with latitude, height and the ground below). Off: the usual 9.81 m/s2." },
       { id: "roads", type: "bool", default: true, name: "Roads", desc: "Real roads, bridges and buildings near you from OpenStreetMap and Overture. Off: bare terrain only." },
-      { id: "highwaySigns", type: "bool", default: true, name: "Highway signs", desc: "Exit and overhead destination signs, merge warnings and Interstate mile markers along US highways, from the signs mapped in OpenStreetMap. Needs Roads." },
+      { id: "highwaySigns", type: "bool", default: true, name: "Highway signs", desc: "Exit and overhead destination signs, merge warnings and Interstate mile markers along US highways, and the German Autobahn signs at every exit and interchange, from the signs mapped in OpenStreetMap. Needs Roads." },
       { id: "models3dmr", type: "bool", default: true, name: "3D models from 3dmr.eu", desc: "Landmarks such as the Eiffel Tower or the Dragon Bridge in Da Nang as real 3D models from the open library 3dmr.eu, downloaded when you first drive near them. Off: the usual generated buildings and bridges there. Your own models (local_models.json) stay.",
         note: "Takes effect the next time you start BeamNG.Earth." },
       { id: "directionSigns", type: "bool", default: true, name: "Direction signs", desc: "Blue or green direction boards before junctions with the road numbers, the places ahead and their distances (cities also in English), from the road network and Overture's places. Needs Roads and Highway signs." },
+      { id: "roadSigns", type: "bool", default: true, name: "Road signs", desc: "Ordinary signs where the road data implies them: no entry, dead end, crossings, bends, roundabouts, give way and stop, tunnels, bus stops. Ukraine, Czechia, Poland and Germany for now. Needs Roads, and the server started with BNE_ROADSIGNS=on." },
+      { id: "germanJunctionSigns", type: "bool", default: false, name: "German junction signs", desc: "In Germany: German right-of-way signs and road markings at junctions, 30-zone signs, and traffic that gives way accordingly." },
+      { id: "townSigns", type: "bool", default: false, name: "Town signs", desc: "Each country's own town entry and exit signs where a road enters a town (in Germany the yellow Ortstafeln, where OpenStreetMap has them mapped), from the road network, the land cover and Overture's places. Needs Roads." },
       { id: "rebaseDistance", type: "float", min: 2000, max: 16000, step: 100, default: 15000, name: "Rebase distance (m)", desc: "Advanced. How far you drive before the world quietly moves back under you (keeps the physics precise). 15 km keeps precision at about 1 mm." },
     ],
   },
@@ -68,6 +71,10 @@ export const settingsSchema = [
       { id: "profilerMode", type: "select", default: "essential", name: "Profiler mode", desc: "Essential keeps frame times, CPU/GPU totals, basic service traffic, average latency and disk space. Full adds detailed steps, worker traces, latency distributions and process I/O sampling.", options: [ { label: "Essential", value: "essential" }, { label: "Full", value: "full" } ] },
       { id: "statusBar", type: "bool", default: true, name: "Status bar", desc: "The bar at the top of the screen: the street and town you are in, loading progress and the frame rate." },
       { id: "placeNamesOnline", type: "bool", default: true, name: "Place names", desc: "Town, state and country names in the status bar, from map data the app downloads once per region (Overture Maps). Your position is not sent anywhere." },
+      { id: "telemetry", type: "bool", default: true, name: "Anonymous usage statistics", desc: "The main switch for the anonymous reports the app sends every 5 minutes: a random install id, the app version and system, whether the game and BeamMP are running. No names, accounts, positions or places; the country is looked up from your connection and the address is not kept. It shows how many people play (earth.tgforever.net/players). Off: nothing at all is sent, whatever the two switches below say. Every field and why: TELEMETRY.md in the BeamNG.Earth folder and on GitHub." },
+      { id: "telemetryPerf", type: "bool", default: true, name: "Performance data", desc: "Part of the anonymous reports: frame rate and hitches, how fast the world is built, the CPU / GPU model and the game and BeamNG.Earth settings, the kind of area you drive in (city, rural, ...) instead of where, and error codes. It shows what makes the game slow or crash on real players' machines.", showIf: c => c.telemetry !== false },
+      { id: "telemetryNet", type: "bool", default: true, name: "Network load", desc: "Part of the anonymous reports: how many requests went to each map-data service, so we can slow down or cache before a free service is overloaded.", showIf: c => c.telemetry !== false },
+      { id: "mapStyle", type: "select", default: "2d", name: "Map style", desc: "What the map key (M) and the pause menu's Map open. 2D: the flat world map. 3D: the camera flies up from your car and you look around the real world like a map app (move with WASD or the left stick, turn and tilt with the mouse or the right stick, zoom with the wheel); the map key again flies back down to the car. The 3D map is experimental. The map key opens the style you switched to last.", options: [ { label: "2D", value: "2d" }, { label: "3D (experimental)", value: "3d" } ] },
       { id: "hudVisible", type: "bool", default: false, name: "Status window", desc: "The compact BeamNG.Earth status window (connection, location, loading, quick buttons). Also whether it opens at level start." },
       { id: "dashboardSatellite", type: "bool", default: true, name: "Satellite map on dashboards", desc: "BeamNG.Earth's satellite map on vehicles with dashboard screens. Off: the stock dashboard page." },
       { id: "creditsVisible", type: "bool", default: true, name: "Data credits on screen", desc: "Small text in a corner naming the sources of the imagery, elevation and weather around you. On by default: many of the data licences ask for visible credit. Hidden in the pause menu and the big map." },
@@ -85,6 +92,15 @@ export const settingsSchema = [
     ],
   },
   {
+    name: "Loading",
+    intro: "Choose what the world loads first around you. The rest follows once that part is in (or after two minutes at most, so nothing is held back for good). Applies at once.",
+    items: [
+      { id: "loadPriority", type: "select", default: "all", name: "Load first", desc: "All: everything loads together, nearest first. Roads or Train tracks / tunnels: the road tiles load before the distant terrain, trees, buildings, traffic and turbines. Rails and tunnels are built inside the road tiles, so these two load exactly the same tiles. Terrain: the ground, distant terrain and horizon load before roads. The ground under your car always loads first.",
+        note: "Rails and tunnels share their tiles with the roads, so Roads and Train tracks / tunnels behave the same.",
+        options: [ { label: "All", value: "all" }, { label: "Roads", value: "roads" }, { label: "Train tracks / tunnels", value: "rails" }, { label: "Terrain", value: "terrain" } ] },
+    ],
+  },
+  {
     name: "Storage",
     items: [
       { id: "cacheUsage", type: "info", name: "Download cache", desc: "Elevation, imagery and map data kept on disk so places you visited load without downloading again: the space in use, the limit and the number of files." },
@@ -94,9 +110,9 @@ export const settingsSchema = [
         options: [ { label: "Off", value: "off" }, { label: "Ahead (12 miles)", value: "ahead" }, { label: "Whole route", value: "route" } ] },
       { id: "cacheDir", type: "path", what: "cache", name: "Cache folder", placeholder: "Folder for the download cache, or default", desc: "Where the download cache is kept, e.g. on another drive. Change... opens your system's folder window (it may open behind the game: Alt+Tab to it); or type or paste a folder below and press Use (default: .cache/beamng-earth in your home folder). Used from the next start of the app; move the old folder's contents there first to keep what is downloaded." },
       { id: "cacheClear", type: "action", name: "Clear cache", desc: "Deletes the downloaded elevation and imagery. What this session used and the gravity model stay. Places are downloaded again when you visit them." },
-      { id: "cacheClearTiles", type: "action", what: "tiles", name: "Clear tiles", desc: "Deletes only the built tiles (road, rail and distant geometry). The props, textures and elevation stay; the tiles are built again when you visit." },
-      { id: "cacheClearProps", type: "action", what: "props", name: "Clear props", desc: "Deletes only the props (foliage and the map data props come from). Tiles and textures stay; props are made again when you visit." },
-      { id: "cacheClearTextures", type: "action", what: "textures", name: "Clear textures", desc: "Deletes only the textures (imagery and its colour fixes). Tiles, props and elevation stay; textures are downloaded again when you visit." },
+      { id: "cacheClearTiles", type: "action", what: "tiles", name: "Clear tiles", desc: "Deletes only the built tiles. Props, textures and elevation stay; tiles are built again when you visit." },
+      { id: "cacheClearProps", type: "action", what: "props", name: "Clear props", desc: "Deletes only the props (foliage and the map data props come from). Tiles and textures stay." },
+      { id: "cacheClearTextures", type: "action", what: "textures", name: "Clear textures", desc: "Deletes only the textures (imagery and its colour fixes). Tiles, props and elevation stay." },
     ],
   },
   {
@@ -113,13 +129,10 @@ export const settingsSchema = [
     ],
   },
   {
-    name: "Loading",
-    intro: "Choose what the world loads first around you. The rest follows once that part is in (or after two minutes at most, so nothing is held back for good). Applies at once.",
-    items: [
-      { id: "loadPriority", type: "select", default: "all", name: "Load first", desc: "All: everything loads together, nearest first (the default). Roads or Train tracks / tunnels: the road tiles load before the distant terrain, trees, buildings, traffic and turbines. Rails and tunnels are built inside the road tiles, so these two load exactly the same tiles. Terrain: the ground, distant terrain and horizon load before roads. The ground under your car always loads first, whatever you pick.",
-        note: "Rails and tunnels share their tiles with the roads, so Roads and Train tracks / tunnels behave the same.",
-        options: [ { label: "All", value: "all" }, { label: "Roads", value: "roads" }, { label: "Train tracks / tunnels", value: "rails" }, { label: "Terrain", value: "terrain" } ] },
-    ],
+    // third-party add-ons (EarthAddons.vue, earthAddonsStore.js): the page is the add-ons' own view, no settings rows
+    name: "Add-ons",
+    addons: true,
+    items: [],
   },
   {
     name: "Feedback",
@@ -169,8 +182,9 @@ export const settingsSchema = [
 
 // Each page's icon (the pause menu's side buttons take the icon's name, LayoutMenu's tabs the icon) and its button id
 // (the first keeps the old Mods-tab button's id: settings.lua M.BUTTON_ID, pageExists)
-export const PAGE_ICONS = { Graphics: "eyeOutlineOpened", World: "globe", Interface: "cogOutline", Loading: "cogOutline",
-  Multiplayer: "peopleOutline", Storage: "floppyDisk", Feedback: "bug", About: "info", Developer: "code" }
+export const PAGE_ICONS = { Graphics: "eyeOutlineOpened", World: "globe", Interface: "cogOutline",
+  Multiplayer: "peopleOutline", Storage: "floppyDisk", "Add-ons": "puzzleModule", Feedback: "bug", About: "info",
+  Developer: "code" }
 export const pageId = (name, i) => i === 0 ? "beamngEarth-settings" : "beamngEarth-settings-" + name.toLowerCase()
 
 // The quality presets' cards (settings.lua PRESETS: what each sets)
@@ -401,8 +415,7 @@ export function applyDevPreset(name) {
   })
 }
 
-// Clear cache: the button asks first (cacheConfirm), Clear sends it; the poll sees the answer. what: one of
-// tiles / props / textures (the server's separate caches), or "" for all.
+// Clear cache: the button asks first (cacheConfirm), Clear sends it; the poll sees the answer
 export function askClearCache(what = "") {
   cacheResult.value = ""
   cacheClearWhat.value = what

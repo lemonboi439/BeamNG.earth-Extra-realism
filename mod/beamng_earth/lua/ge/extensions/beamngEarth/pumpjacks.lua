@@ -1,15 +1,23 @@
 -- Pump jacks at oil wells (the user, 2026-10-26: "since we're adding these sounds. Could we add matching props as
--- well"): the mod's own pumpjack (tools/build_fuel_props.py; one static model, no stock map's animated group), at
--- the wells the road tiles list (server oilwells.py: OpenStreetMap's man_made=petroleum_well points, not gas, not
--- ended, not pump=no; rows [x, y, z, yaw] in the anchor frame, yaw degrees counter-clockwise as the server's).
+-- well"): West Coast USA's animated pump jack (its five parts placed as its pumpjacks group: every part at the base's
+-- yaw, at an offset along the base's own y axis; the base, the tower with the gear box and ladder, is drawn: its file
+-- says isRenderEnabled false but the tower shows there, and hidden here the jack had no tower, 2026-10-26) with its two sounds (the engine at the gear
+-- box, the squeak at the horsehead, as its Pump_Jack_Engine_n / Pump_Jack_Squeak_n emitters), at the wells the road
+-- tiles list (server oilwells.py: OpenStreetMap's man_made=petroleum_well points, not gas, not ended, not pump=no;
+-- rows [x, y, z, yaw] in the anchor frame, yaw degrees counter-clockwise as the server's).
 local M = {}
 
-local OBJ = '/levels/beamng_earth/art/shapes/beamngEarth/fuel/'
-M.MATERIALS = OBJ .. 'fuel.materials.json'
--- { shape, along its y (m), up (m) }
-M.PARTS = { { OBJ .. 'bne_pumpjack.dae', 0, 0 } }
-M.SOUNDS = {}             -- (the stock map's emitter events go with its assets; the wells are silent for now)
-local materialsLoaded = false
+local OBJ = '/levels/west_coast_usa/art/shapes/objects/'
+-- { shape, along its y (m), up (m) } (West Coast USA's pumpjacks group, read 2026-10-26: every jack the same)
+M.PARTS = {
+  { OBJ .. 'pumpjack_a.dae', 0, 0 },
+  { OBJ .. 'pumpjack_b.dae', 1.282, 2.622 },
+  { OBJ .. 'pumpjack_c.dae', 1.362, 6.102 },
+  { OBJ .. 'pumpjack_d.dae', -2.194, 7.677 },
+  { OBJ .. 'pumpjack_e.dae', 1.356, 6.272 },
+}
+M.SOUNDS = { { 'event:>Ambient>Maps>West Coast>Pump Jack_Engine', 2 },   -- { event, at part n }
+             { 'event:>Ambient>Maps>West Coast>Pump Jack_Squeak', 4 } }
 M.SOUND_N = 6            -- the nearest this many jacks within SOUND_M of the listener have their sounds ...
 M.SOUND_M = 150          -- ... (West Coast USA's emitters reach 120 m)
 M.TILE_MAX = 40          -- jacks a road tile shows at most (a dense California field: a well every ~50 m)
@@ -36,10 +44,6 @@ local function place(o, pos, th)
 end
 
 local function makeJack(j)
-  if not materialsLoaded then
-    if loadJsonMaterialsFile then pcall(loadJsonMaterialsFile, M.MATERIALS) end
-    materialsLoaded = true
-  end
   j.objs, j.snd = {}, {}
   for i, pos in ipairs(M.partPositions(j.x, j.y, j.z, j.th)) do
     local p = M.PARTS[i]

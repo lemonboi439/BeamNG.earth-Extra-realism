@@ -324,6 +324,39 @@ end
 M.SPACES = { [0] = 'Level_Tunnel_Closed', [1] = 'Level_Under_Bridge_A', [2] = 'Level_Tunnel_Open',
   [3] = 'Level_Parking_House' }
 M.ROOFED = { [0] = true, [2] = true, [3] = true }   -- the spaces with a roof (no rain heard)
+
+-- Is the listener inside a roofed sound space (a tunnel / parking garage)?
+function M.inTunnel(x, y, z)
+  for _, list in pairs(spaces) do
+    for _, sp in ipairs(list) do
+      local r = sp.row
+      if M.ROOFED[r[1]] and math.abs(x - r[2]) <= r[5] / 2 and math.abs(y - r[3]) <= r[6] / 2
+          and z >= r[4] - r[7] / 2 - 2 and z <= r[4] + r[7] / 2 + 2 then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+M.ROOF_NEAR_UP_M = 20
+-- Within margin m of a roofed space (its ramp / approach), below the roof top + ROOF_NEAR_UP_M.
+function M.nearRoof(x, y, z, margin)
+  for _, list in pairs(spaces) do
+    for _, sp in ipairs(list) do
+      local r = sp.row
+      if M.ROOFED[r[1]] then
+        local dx, dy = x - r[2], y - r[3]
+        local ex = math.max(0, math.abs(dx) - r[5] / 2)
+        local ey = math.max(0, math.abs(dy) - r[6] / 2)
+        if ex * ex + ey * ey <= margin * margin and z <= r[4] + r[7] / 2 + M.ROOF_NEAR_UP_M then
+          return true
+        end
+      end
+    end
+  end
+  return false
+end
 -- A closed tunnel's mouths (kind 4, a point 10 m inside): the stock portal snapshot event there (West Coast USA's
 -- highway tunnels'), which fades the outside out over ~25 m before the portal instead of at once (recorded 2026-10-26:
 -- cut off within ~10 m of it, 7 dB down at 20 m, untouched from 40 m).
@@ -468,28 +501,6 @@ local function inTunnel(x, y, z)
   return false
 end
 M.inTunnel = inTunnel
-
--- Is (x, y, z) within margin m (in plan) of a roofed space and not far above its roof? A tunnel's approach is
--- outside its sound space, yet the river's flat water tile lies over the open ramp before the portal and cut across
--- the road (sea.lua parks the water near it; the user's Rotherhithe screenshot 2026-11-08). Pure.
-function M.nearRoof(x, y, z, margin)
-  for _, list in pairs(spaces) do
-    for _, sp in ipairs(list) do
-      local r = sp.row
-      if M.ROOFED[r[1]] then
-        local dx, dy = x - r[2], y - r[3]
-        local c, s = math.cos(r[8]), math.sin(r[8])
-        local ex = math.max(0, math.abs(dx * c + dy * s) - r[5] / 2)
-        local ey = math.max(0, math.abs(-dx * s + dy * c) - r[6] / 2)
-        if ex * ex + ey * ey <= margin * margin and z <= r[4] + r[7] / 2 + M.ROOF_NEAR_UP_M then
-          return true
-        end
-      end
-    end
-  end
-  return false
-end
-M.ROOF_NEAR_UP_M = 20       -- m above a roofed space's top it still counts as the tunnel's approach
 
 -- The tunnels' lights at night (nightlights.lua's pool): along every tunnel box (kinds 0 and 2),
 -- every TUNNEL_LIGHT_M, TUNNEL_LIGHT_DROP_M under its roof.

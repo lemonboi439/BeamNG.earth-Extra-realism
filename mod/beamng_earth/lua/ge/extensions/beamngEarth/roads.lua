@@ -6,10 +6,9 @@
 -- frame governor (kinds roadChunk / roadDelete). A new anchor makes every road of the old one go
 -- (the server sends the new frame's tiles again).
 --
--- Materials are the mod's own (tools/build_bne_assets.py generates every texture; no asset from another
--- level): roads, sidewalks, curbs, lines and dirt in roads.materials.json, the rail and tunnel materials
--- in tunnel.materials.json, and the buildings in buildings.materials.json. They keep the stock material
--- names the server's chunks carry, so the world server and the mod agree without a version gate.
+-- Materials are stock ones from official levels, loaded at runtime from the player's own install
+-- (nothing copied): West Coast USA's asphalt strip, sidewalks and lines, Johnson Valley's dirt road
+-- tracks, Italy's cobblestone.
 --
 -- Raised sidewalks (curbs, sidewalk slabs): one mesh per tile (server/sidewalks.py, the way West
 -- Coast USA builds its sidewalks: one modelled mesh per district, with its `curbs` and `sidewalk1`
@@ -21,14 +20,25 @@
 -- Console: beamngEarth_roads.status(), .setEnabled(bool)
 
 local stopwatch = require('beamngEarth/stopwatch')
+local sea = require('beamngEarth/sea')
 
 local M = {}
 
-M.MATERIAL_FILES = { '/levels/beamng_earth/art/shapes/beamngEarth/roads.materials.json',  -- own: every road surface
-  '/levels/beamng_earth/art/shapes/beamngEarth/tunnel.materials.json',      -- own: rail bed, decks, tunnel lining
-  '/levels/beamng_earth/art/shapes/beamngEarth/buildings.materials.json',   -- buildings (server/buildings.py)
-  '/levels/beamng_earth/art/shapes/beamngEarth/garden.materials.json',      -- mapped garden walls (fences.py)
-  '/levels/beamng_earth/art/shapes/beamngEarth/dirtroad.materials.json',    -- dirt / gravel strips (roads.DIRT_LOOK)
+M.MATERIAL_FILES = { '/levels/west_coast_usa/art/road/main.materials.json',
+  '/levels/beamng_earth/art/shapes/beamngEarth/fr_traffic/main.materials.json',
+  '/levels/beamng_earth/art/shapes/beamngEarth/de_autobahn/de_autobahn.materials.json',   -- the German Autobahn signs (deautobahn)
+  '/levels/east_coast_usa/art/road/main.materials.json',         -- ECA_road_edge_dirt (the asphalt's edge, roads.EDGE_DECAL)
+  '/levels/west_coast_usa/art/decals/main.materials.json',       -- roadmarkings1 (turn arrows, markings.ARROW_MATERIAL)
+  '/levels/west_coast_usa/art/shapes/roads/main.materials.json',   -- curbs, sidewalk1 (the sidewalk mesh)
+  '/levels/johnson_valley/art/decalroad/main.materials.json',
+  '/levels/italy/art/shapes/buildings/main.materials.json',        -- italy_cobblestone (paving stones)
+  '/levels/driver_training/art/road/main.materials.json',          -- m_metal_grid_drain (storm drains)
+  '/levels/gridmap_v2/art/shapes/grid/main.materials.json',        -- m_gm_concrete_plain (concrete streets)
+  '/levels/beamng_earth/art/shapes/beamngEarth/regional_signs/main.materials.json',
+  '/levels/beamng_earth/art/shapes/beamngEarth/eu_surfaces/main.materials.json',
+  '/levels/beamng_earth/art/shapes/beamngEarth/buildings.materials.json',  -- buildings (server/buildings.py)
+  '/levels/beamng_earth/art/shapes/beamngEarth/fr_houses/main.materials.json',
+  '/levels/beamng_earth/art/shapes/beamngEarth/dirtroad.materials.json',   -- dirt / gravel strips (roads.DIRT_LOOK)
   -- highway signs (server/signstream.py: exit and overhead panels, mile markers, merge warnings)
   '/levels/beamng_earth/art/shapes/beamngEarth/roadside/exit.materials.json',
   '/levels/beamng_earth/art/shapes/beamngEarth/roadside/merge.materials.json',
@@ -39,7 +49,7 @@ M.enabled = true
 -- (key "s<tx>_<ty>") carry the render-only shapes SIGN_WHATS; switched off, their objects go but each tile keeps its data
 -- (signData) to show again at once
 M.signsEnabled = true
-M.SIGN_WHATS = { 'exits', 'mileposts', 'merges', 'speeds', 'dirs', 'names' }
+M.SIGN_WHATS = { 'exits', 'mileposts', 'merges', 'speeds', 'dirs', 'rsigns', 'autobahn' }
 -- be:reloadCollision() at most this often: every rebuild is a ~20 ms physics frame (2026-10-13, the
 -- engine's frame metrics), and while driving new sidewalk tiles arrive all the time. They arrive ~640 m
 -- ahead (11 s at 58 m/s), so a few seconds before they collide do not matter. A terrain commit rebuilds
@@ -196,6 +206,11 @@ local function tileKey(aid, k) return tostring(aid) .. ':' .. tostring(k) end
 -- its last object is deleted (a collider deleted and made again while the tile lives keeps it).
 local session = nil        -- the server session the slots belong to (setSession)
 local objSlot = {}         -- object id -> slot number of the pooled file it loaded
+local waterSerial, objectWater, waterReleases, waterReloads = 0, {}, {}, 0
+local function protectWater(t, data, anchor)
+  waterSerial = waterSerial + 1
+  t.waterguard = sea.protect(waterSerial, data.waterguard, anchor)
+end
 local slotLive = {}        -- slot number -> objects alive with it
 local slotDropped = {}     -- slot number -> { serial, session } of a dropped tile's slot, reported at its last delete
 local slotsGone = {}       -- { n, serial, session } to report
@@ -204,13 +219,19 @@ local function slotOf(path) return tonumber(type(path) == 'string' and path:matc
 function M.setSession(s) session = s end
 
 -- An object with a pooled shape was made / is deleted.
-local function slotMade(id, path)
+local function slotMade(id, path, water)
+  if water then objectWater[id] = water; sea.retain(water) end
   local n = slotOf(path)
   if not n then return end
   objSlot[id] = n
   slotLive[n] = (slotLive[n] or 0) + 1
 end
 local function slotObjGone(id)
+  local water = objectWater[id]
+  if water then
+    objectWater[id] = nil
+    waterReleases[#waterReleases + 1] = { water, reloads + 1 }
+  end
   local n = objSlot[id]
   if not n then return end
   objSlot[id] = nil
@@ -318,9 +339,10 @@ local function dropTile(key)
   if t.walk then deleteQ[#deleteQ + 1] = t.walk end
   if t.road then deleteQ[#deleteQ + 1] = t.road end
   if t.deck then deleteQ[#deleteQ + 1] = t.deck end
-  for _, w in ipairs({ 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'tunnel', 'railtunnel', 'barrier', 'rail', 'railcol' }) do if t[w] then deleteQ[#deleteQ + 1] = t[w] end end
+  for _, w in ipairs({ 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'tunnel', 'barrier', 'rail', 'railcol' }) do if t[w] then deleteQ[#deleteQ + 1] = t[w] end end
   if t.wire then deleteQ[#deleteQ + 1] = t.wire end
   for _, w in ipairs(M.SIGN_WHATS) do if t[w] then deleteQ[#deleteQ + 1] = t[w] end end
+  if t.signs then deleteQ[#deleteQ + 1] = t.signs end
   -- and its meshes not made yet (from KyzoFox's 1.5.4, PR #64): a tile sent again under the same key left its old
   -- walkQ / held / createQ entries, which were then made for the new tile from pooled shape paths that had just been
   -- reported gone and refilled with another tile's shape: that tile's buildings drawn here at its ground height (houses
@@ -339,6 +361,7 @@ local function dropTile(key)
   if t.sound then require('beamngEarth/ambience').dropSpaces(key) end
   if t.wells then require('beamngEarth/pumpjacks').dropKey(key) end
   if t.turbines then require('beamngEarth/windturbines').dropKey(key) end
+  sea.release(t.waterguard)
   tiles[key] = nil
 end
 
@@ -552,7 +575,7 @@ M.geoStats = { tiles = 0, kept = 0, replaced = 0, skins = 0, skinSwaps = 0, exac
 local geotile = require('beamngEarth/geotile')
 local geodesy = require('beamngEarth/geodesy')
 local anchorObj = nil       -- the current anchor (geodesy) the geotiles are placed into (M.update, onTile)
-M.CONTENT_WHATS = { 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'wire', 'tunnel', 'railtunnel', 'barrier', 'rail', 'railcol' }
+M.CONTENT_WHATS = { 'signs', 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'wire', 'tunnel', 'rail', 'railcol' }
 M.SKIN_WHATS = { 'road', 'walk', 'walkcol' }
 
 local function geoKey(gkey) return 'g:' .. tostring(gkey) end
@@ -664,6 +687,10 @@ local function geoRows(key, t, data, replacing)
   if type(data.props) == 'table' and type(data.props.items) == 'table' then   -- street lights, poles (trees.lua)
     -- (at a rebase trees.lua places its own geotiles: trees.transform)
     if not replacing then
+      -- the town signs' faces: their Materials and shapes first (townsigns.lua)
+      if type(data.townsigns) == 'table' then
+        require('beamngEarth/townsigns').register(require('beamngEarth/trees'), data.townsigns)
+      end
       require('beamngEarth/trees').onGeoRows('p' .. t.gkey, t.gkey, data.props.items, data.props.groups, nil,
         t.frame, t.rowPivot or 0, t.anchorObj)
     end
@@ -711,7 +738,7 @@ local function queueGeoParts(key, t, data)
   for _, what in ipairs(M.CONTENT_WHATS) do
     if t.parts[what] then
       local q = { key = key, what = what, tile = t, geo = true,
-        renderOnly = what == 'wire' or (lean and what:sub(1, 3) == 'bld' and what ~= 'bldcol') or (leanRail and what == 'rail') }
+        renderOnly = what == 'wire' or what == 'signs' or (lean and what:sub(1, 3) == 'bld' and what ~= 'bldcol') or (leanRail and what == 'rail') }
       if not q.renderOnly then t.colWant[what] = true end
       if q.renderOnly or M.collideNear(t) then walkQ[#walkQ + 1] = q else parked[#parked + 1] = q end
     end
@@ -773,6 +800,10 @@ function M.onGeoTile(msg, currentAnchor, a)
   if not frame then lastError = 'road geotile without a frame: ' .. tostring(msg.key); return false end
   local t = { anchor = currentAnchor, geo = true, gkey = msg.key, frame = frame, h = h, objs = {}, queued = 0,
     colliders = {}, slots = {}, at = now(), colWant = {}, parts = {}, exactShape = {}, exactOf = {} }
+  -- (its buildings and their footprint share, server blockworker: the scene complexity, M.scene)
+  if type(data.scene) == 'table' and type(data.scene[1]) == 'number' then
+    t.sceneN, t.sceneCover = data.scene[1], tonumber(data.scene[2]) or 0
+  end
   local cols = type(data.colliders) == 'table' and data.colliders or {}
   local pivots, np = 0, 0
   for _, what in ipairs(M.CONTENT_WHATS) do
@@ -798,6 +829,7 @@ function M.onGeoTile(msg, currentAnchor, a)
   end
   t.rowPivot = np > 0 and pivots / np or 0
   t.data = data
+  protectWater(t, data, a)
   M.placeGeoTile(t, a)
   tiles[key] = t
   sinceChange = stopwatch.new()
@@ -929,7 +961,7 @@ function M.onExact(msg, currentAnchor)
         walkQ = keep
         local lean = t.parts.bldcol ~= nil
         local q = { key = geoKey(msg.key), what = what, tile = t, geo = true, swap = true,
-          renderOnly = what == 'wire' or (lean and what:sub(1, 3) == 'bld' and what ~= 'bldcol')
+          renderOnly = what == 'wire' or what == 'signs' or (lean and what:sub(1, 3) == 'bld' and what ~= 'bldcol')
             or (t.parts.railcol ~= nil and what == 'rail') }
         walkQ[#walkQ + 1] = q
       end
@@ -1073,8 +1105,8 @@ function M.onTile(msg, currentAnchor, a)
   end
   -- pooled shape files: the server's slot paths instead of the tile's own files
   local slots = {}
-  for _, what in ipairs({ 'road', 'deck', 'walk', 'walkcol', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'wire', 'tunnel', 'rail',
-      'railcol', 'barrier', 'exits', 'mileposts', 'merges', 'speeds', 'dirs', 'names' }) do
+  for _, what in ipairs({ 'road', 'deck', 'walk', 'walkcol', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'wire', 'signs', 'tunnel', 'rail',
+      'railcol', 'barrier', 'exits', 'mileposts', 'merges', 'speeds', 'dirs', 'rsigns', 'autobahn' }) do
     local sl = msgSlot(msg, what)
     if sl then
       if type(data[what]) == 'table' and type(data[what].pos) == 'table' then
@@ -1088,6 +1120,7 @@ function M.onTile(msg, currentAnchor, a)
   local road = type(data.road) == 'table' and data.road.shape and type(data.road.pos) == 'table' and data.road
   tiles[key] = { anchor = msg.anchorId, objs = {}, queued = road and 0 or #data.chunks,
     colliders = type(data.colliders) == 'table' and data.colliders or {}, slots = slots, at = now(), colWant = {} }
+  protectWater(tiles[key], data, a)
   sinceChange = stopwatch.new()
   if road then                -- the tile's road mesh replaces its DecalRoads (server/roadmesh.py)
     walkQ[#walkQ + 1] = { key = key, walk = road, what = 'road', tile = tiles[key] }
@@ -1095,6 +1128,11 @@ function M.onTile(msg, currentAnchor, a)
     for _, c in ipairs(data.chunks) do createQ[#createQ + 1] = { key = key, chunk = c } end
   end
   if type(data.props) == 'table' and type(data.props.items) == 'table' then   -- street lights, poles (trees.lua)
+    if type(data.townsigns) == 'table' then   -- the town signs' faces: their Materials and shapes first (townsigns.lua)
+      local townsigns, trees = require('beamngEarth/townsigns'), require('beamngEarth/trees')
+      townsigns.register(trees, data.townsigns)
+      townsigns.addSigns(trees, msg.anchorId, data.props.items, data.props.groups)   -- (the trees in front: hidden)
+    end
     require('beamngEarth/trees').onRows(msg.anchorId, 'p' .. tostring(msg.key), data.props.items, data.props.groups)
     require('beamngEarth/nightlights').onRows(key, data.props.items, data.props.groups)   -- (the lamps' light)
     tiles[key].props = true
@@ -1122,6 +1160,9 @@ function M.onTile(msg, currentAnchor, a)
   if type(data.sound) == 'table' and data.sound[1] then    -- tunnels' and bridges' sound spaces (ambience.lua)
     require('beamngEarth/ambience').onSpaces(key, data.sound)
     tiles[key].sound = true
+  end
+  if type(data.signs) == 'table' and data.signs.shape and type(data.signs.pos) == 'table' then
+    walkQ[#walkQ + 1] = { key = key, walk = data.signs, what = 'signs', renderOnly = true, tile = tiles[key] }
   end
   if type(data.wire) == 'table' and data.wire.shape and type(data.wire.pos) == 'table' then    -- pole wires
     walkQ[#walkQ + 1] = { key = key, walk = data.wire, what = 'wire', tile = tiles[key] }
@@ -1157,7 +1198,7 @@ function M.onTile(msg, currentAnchor, a)
   local leanWalk = type(data.walkcol) == 'table' and data.walkcol.shape ~= nil
   local leanRail = type(data.railcol) == 'table' and data.railcol.shape ~= nil
   -- tunnels (server roadmesh.tunnel: tubes and portals) and railway tracks (server railways.py) collide like the decks
-  for _, what in ipairs({ 'walk', 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'tunnel', 'railtunnel', 'barrier', 'rail', 'railcol' }) do
+  for _, what in ipairs({ 'walk', 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'tunnel', 'barrier', 'rail', 'railcol' }) do
     local w = data[what]
     if type(w) == 'table' and w.shape and type(w.pos) == 'table' then
       local q = { key = key, walk = w, what = what, tile = tiles[key],
@@ -1576,8 +1617,8 @@ end
 M.GHOST_FAR_WAIT_S = 2      -- ... from this long after the rebase on
 local ghostSince = nil      -- stopwatch since the last rebase that left ghosts
 
-local WHATS = { 'walk', 'road', 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'wire', 'tunnel', 'railtunnel', 'barrier', 'rail', 'railcol',
-  'exits', 'mileposts', 'merges', 'speeds', 'dirs', 'names' }
+local WHATS = { 'walk', 'road', 'deck', 'bld', 'bld2', 'bld3', 'bld4', 'bldcol', 'walkcol', 'wire', 'signs', 'tunnel', 'barrier', 'rail', 'railcol',
+  'exits', 'mileposts', 'merges', 'speeds', 'dirs', 'rsigns', 'autobahn' }
 
 function M.transform(xf, geodesy)
   local bx, by, bz, bw = xf:beamngQuat()
@@ -1732,6 +1773,16 @@ local function step(name)
   stepT0 = t
 end
 function M.update(gov, currentAnchor, player, view, a)
+  -- A deleted collider stays in the physics cache until a rebuild. Allow a full subsequent update after
+  -- that asynchronous rebuild before restoring deep water over its old bore.
+  if #waterReleases > 0 then           -- (no table a frame when there is nothing to release)
+    local keepWater = {}
+    for _, r in ipairs(waterReleases) do
+      if r[2] <= waterReloads then sea.release(r[1]) else keepWater[#keepWater + 1] = r end
+    end
+    waterReleases = keepWater
+  end
+  waterReloads = reloads
   stepT0 = stepClock()
   viewAt = view
   if a then anchorObj = a end
@@ -1808,7 +1859,7 @@ function M.update(gov, currentAnchor, player, view, a)
       -- the buildings' and sidewalks' lean meshes are a collision detail (server cdae collision_only): never drawn
       local ok, id = pcall(createWalk, walk,
         (q.what == 'bldcol' or q.what == 'walkcol' or q.what == 'railcol') and 'Collision Mesh' or not isRoad)
-      if ok then slotMade(id, walk.shape) end
+      if ok then slotMade(id, walk.shape, (q.what == 'deck' or q.what == 'tunnel') and t.waterguard or nil) end
       if ok and q.skin and t.skin then             -- a new skin's part: the old one's goes (all, with the last)
         t.skin.pending = t.skin.pending - 1
         M.dropOldSkin(t, q.what)
@@ -1981,7 +2032,7 @@ function M.nextWalk(q)
       end
     end
     if e.renderOnly or e.what == 'wire' then k = k + 1e6 end
-    if e.what == 'deck' or e.what == 'tunnel' or e.what == 'railtunnel' then k = math.max(0, k - M.DRIVE_FIRST_M) end
+    if e.what == 'deck' or e.what == 'tunnel' then k = math.max(0, k - M.DRIVE_FIRST_M) end
     if k < bestKey then best, bestKey = i, k end
   end
   return best
@@ -1995,7 +2046,7 @@ function M.urgentWalk(q)
   local reach = math.max(150, lastSpeed * M.URGENT_S) + M.TILE_M * 0.71
   local best, bd = nil, math.huge
   for i, e in ipairs(q) do
-    if e.what == 'deck' or e.what == 'tunnel' or e.what == 'railtunnel' then
+    if e.what == 'deck' or e.what == 'tunnel' then
       local t = tiles[e.key]
       if t and t.cx and not t.ghost and (not e.tile or e.tile == t) then
         local dx, dy = t.cx - p.x, t.cy - p.y
@@ -2142,11 +2193,15 @@ function M.clear()
   end
   deleteQ = {}
   walkQ, parked = {}, {}
-  if collisionDirty then be:reloadCollision(); collisionDirty = false end
+  if collisionDirty then be:reloadCollision(); M.collisionRebuilt() end
 end
 
 -- The level ended: its objects are gone with it.
 function M.reset()
+  for _, t in pairs(tiles) do sea.release(t.waterguard) end
+  for _, token in pairs(objectWater) do sea.release(token) end
+  for _, r in ipairs(waterReleases) do sea.release(r[1]) end
+  objectWater, waterReleases, waterReloads = {}, {}, reloads
   -- (the level took the objects: every slot goes)
   for _, t in pairs(tiles) do for _, sl in pairs(t.slots or {}) do slotsGone[#slotsGone + 1] = { sl[1], sl[2], sl[3] } end end
   for _, f in pairs(far) do
@@ -2213,6 +2268,9 @@ function M.ahead(x, y, hx, hy, dist)
         e.road = t.road ~= nil or (t.queued or 0) <= 0
         e.bld = t.bld ~= nil                    -- (a tile without buildings never has one)
         e.walk = t.walk ~= nil
+        for _, q in ipairs(walkQ) do              -- (a sidewalk / kerb import still queued: the walk lead)
+          if q.key == tkey then e.walkWait = true; break end
+        end
         local want, made, solid = 0, 0, 0
         for what in pairs(t.colWant or {}) do
           want = want + 1
@@ -2233,6 +2291,13 @@ function M.ahead(x, y, hx, hy, dist)
             end
           end
         end
+      end
+      -- the tree tile there (trees.lua, geotiles only): not arrived or still being placed (the tree lead)
+      if M.geo then
+        local T = package.loaded['beamngEarth/trees']
+        local all = T and T.debugTiles and T.debugTiles()
+        local tt = type(all) == 'table' and all['g:' .. tostring(sq)] or nil
+        e.trees = tt ~= nil and not tt.pending
       end
       out[#out + 1] = e
     end
@@ -2395,6 +2460,25 @@ function M.status()
     urgentWalks = M.urgentWalks or 0, quietS = sinceChange() / 1000, error = lastError, units = unitStats, unitLog = unitLog,
     geo = M.geo or false, geoStats = M.geoStats, farGeo = M.farGeo or false, farGeoTiles = ngf,
     farGeoShown = ngShown }
+end
+
+-- The scene round the car for the anonymous performance reports (perfsummary.lua): the loaded road tiles (those within
+-- the send distance) with their buildings and mean footprint share. No place: counts only.
+-- (tiles built before their counts were sent have none: the known ones' total scaled to all; none known: nil)
+function M.scene()
+  local n, known, nb, cover = 0, 0, 0, 0
+  for _, t in pairs(tiles) do
+    if t.geo and not t.orphan then
+      n = n + 1
+      if t.sceneN then
+        known = known + 1
+        nb = nb + t.sceneN
+        cover = cover + (t.sceneCover or 0)
+      end
+    end
+  end
+  if known == 0 then return { tiles = n } end
+  return { tiles = n, buildings = math.floor(nb * n / known + 0.5), cover = cover / known }
 end
 
 local okSweep, swept = pcall(M.sweep)

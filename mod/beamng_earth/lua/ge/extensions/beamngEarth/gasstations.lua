@@ -1,6 +1,6 @@
 -- Gas stations with refuelling (the user, 2026-10-23: "the refueling is the main part, we can already refuel in beam so
 -- I want to include it on this impressive map mod"). The road tiles carry their stations (server/gasstations.py,
--- `fuel`): the mod's own canopy, pillar, pump and bollard shapes as TSStatics, and per pump a BeamNGGameplayArea + a
+-- `fuel`): West Coast USA's canopy and pump shapes as TSStatics, and per pump a BeamNGGameplayArea + a
 -- BeamNGPointOfInterest, the pair the stock freeroam/gasStations.lua reads a level's pumps as
 -- (west_coast_usa/facilities/facilities.facilities.json). The stations reach it through onGetRawPoiListForLevel
 -- (core.lua hands that hook to M.pois): drive slowly into an area, the stock "Refuel" prompt fills the tank.
@@ -9,7 +9,9 @@
 -- A station is kept while any road tile has it (a rebase's ghost tile and the new anchor's tile: one set of objects).
 local M = {}
 
-M.MATERIAL_FILES = { '/levels/beamng_earth/art/shapes/beamngEarth/fuel/fuel.materials.json',
+M.MATERIAL_FILES = { '/levels/west_coast_usa/art/shapes/buildings/main.materials.json',     -- m_gasstation_tyrannos
+  '/levels/west_coast_usa/art/shapes/objects/main.materials.json',                          -- corrugation
+  '/levels/east_coast_usa/art/shapes/buildings/main.materials.json',                        -- (US East's units)
   '/levels/italy/art/shapes/buildings/main.materials.json' }    -- (Europe's EV chargers: docs/research/2026-10-29-ev-chargers.md)
 M.CLEAR_S = 0.5            -- the POI list gathered again at most this often (s)
 M.ENERGY = { 'gasoline', 'diesel' }

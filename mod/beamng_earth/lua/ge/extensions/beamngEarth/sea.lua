@@ -4,11 +4,11 @@
 -- under the sea. A WaterBlock's surface is at its position (the engine caps its volume at the box's
 -- centre), its volume DEPTH_M / 2 below.
 local M = {}
+local waterguard = require('beamngEarth/waterguard')
 local ambience = require('beamngEarth/ambience')
+M.GUARD_VERSION = 1
 
-M.DEPTH_M = 200         -- fallback z scale when the server sends no per-tile depth (water down to 100 m below the
-                        -- surface). A tile's depth now reaches just under its sampled bed, so tunnels under a river
-                        -- (rail bores, the Underground) stay outside the water volume.
+M.DEPTH_M = 200         -- the blocks' z scale: water down to 100 m below the surface (sea floors <= 80 m)
 M.CREATE_PER_FRAME = 4  -- tiles made per frame (a full set of ~50 in under a second, no hitch)
 M.NUDGE_SPEED = 1.0     -- m/s: a car slower than this inside a new tile is re-placed where it is, so its
                         -- physics sees the water (a parked car only notices water when it moves)
@@ -72,23 +72,25 @@ local function riverSpeeds(flow)
 end
 
 local TEXTURES = {      -- field, East Coast's file, the stock fallback (0.40 moved them from /core/art/water to /assets)
-  { 'rippleTex', '/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_water_ripple_nm.normal.png', '/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_water_ripple_nm.normal.png' },
+  { 'rippleTex', '/levels/east_coast_usa/art/water/ripple3.dds', '/assets/materials/tileable/water/water_effects/ripple_nm.normal.dds' },
   -- (2026-10-15: the ramp is a .png in East Coast USA, and neither fallback existed: ~1000 "texture missing" log
   -- errors per session that filled the log's 15000 lines before the end of a drive)
-  { 'depthGradientTex', '/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_water_depth_ramp.png',
-    '/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_water_depth_ramp.png' },
-  { 'foamTex', '/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_water_foam_b.color.png', '/levels/beamng_earth/art/shapes/beamngEarth/bne_tex/t_bne_water_foam_b.color.png' },
+  { 'depthGradientTex', '/levels/east_coast_usa/art/water/depthcolor_ramp.png',
+    '/assets/materials/tileable/water/depthcolor_ramp/river_depthcolor_ramp_b.png' },
+  { 'foamTex', '/levels/east_coast_usa/art/water/foam.dds', '/assets/materials/tileable/water/water_effects/foam_b.color.dds' },
 }
 
 local want = nil         -- { anchorId, tiles = { key -> tile }, rivers = { key -> river } } from the server
+local rawWant = nil      -- server geometry before finite-column tunnel exclusions
+local guardOwners, guardRecords = {}, {} -- road tile instances, retained until their last mesh is deleted
+local segments, fluidDirty = {}, false
 M.riversVersion = 0      -- counts changes of want's rivers (ambience.lua's river sounds follow them)
 local made = {}         -- key -> { id, t }
 local madeRivers = {}   -- key -> id
+local riverData = {}    -- key -> definition used for its live object
 local madeAnchor = nil
 local phys = nil        -- { id, x, y, z } of the physics block
 local physStale = false -- tiles were made since it was: made again once a frame makes none
-local tunnelHide = false -- the player is inside a roofed space (a tunnel, an arch): no water volume or surface there
-local riversParked = false -- ... and every River deleted: a River's volume still pushes a car under it (Rotherhithe)
 M.created, M.nudges, M.physMade, M.riversMade, M.riverErrors = 0, 0, 0, 0, 0
 M.RIVER_PREFIX = 'bngEarthRiver_'
 -- Rivers farther than RIVER_HIDE_M from the camera (their box) are hidden, shown again within RIVER_SHOW_M: each River
@@ -96,14 +98,13 @@ M.RIVER_PREFIX = 'bngEarthRiver_'
 -- the A10 west of Genoa (404 Rivers in the 3 x 3 map cells, half of them over 2.4 km away; 2026-11-05). Far off, the
 -- ground photo shows the water. Checked every RIVER_CULL_S.
 M.RIVER_SHOW_M, M.RIVER_HIDE_M, M.RIVER_CULL_S = 1100, 1200, 0.5
-M.TUNNEL_NEAR_M = 90        -- m from a roofed space's box the tunnel's approach starts counting (Rotherhithe's water)
-M.TUNNEL_CLEAR_M = 160      -- ... and m round the player the water tiles are hidden there (a sea tile is >= 2048 m:
-                            -- the one under the approach covers the ramp, not only the river over the bore)
 M.riversHidden = 0
 local riverBox = {}     -- key -> { x0, y0, z0, x1, y1, z1 } (the River's world box, read once)
 local riverHidden = {}  -- key -> true while hidden
 local lastCull = -1e9
-M.SUBDIVIDE_MIN, M.SUBDIVIDE_COLUMNS = 6, 8    -- a River's near mesh: at most 8 columns, cells >= 6 m
+M.SUBDIVIDE_MIN, M.SUBDIVIDE_COLUMNS = 6, 8
+M.TUNNEL_NEAR_M = 90
+M.TUNNEL_CLEAR_M = 160    -- a River's near mesh: at most 8 columns, cells >= 6 m
 
 local function exists(p)
   return not FS or FS:fileExists(p)
@@ -119,14 +120,14 @@ end
 
 local function removeAll()
   for _, m in pairs(made) do
-    local o = scenetree.findObjectById(m.id)
+    local o = m.id and scenetree.findObjectById(m.id)
     if o then o:delete() end
   end
   for _, id in pairs(madeRivers) do
     local o = scenetree.findObjectById(id)
     if o then o:delete() end
   end
-  made, madeRivers, madeAnchor = {}, {}, nil
+  made, madeRivers, riverData, madeAnchor = {}, {}, {}, nil
   riverBox, riverHidden = {}, {}
   removePhys()
 end
@@ -168,6 +169,7 @@ local function createRiver(key, r)
   if o.reloadTextures then o:reloadTextures() end
   if o.regenerate then o:regenerate() end
   madeRivers[key] = o:getId()
+  riverData[key] = r
   M.riversMade = M.riversMade + 1
 end
 
@@ -190,29 +192,28 @@ local function setGridSize(o, size)
   o:setField('gridSize', 0, tostring(math.max(1, math.floor(math.min(100, size)))))
 end
 
-local function makePhys(p, z, depth)
+local function makePhys(p, z, size, depth)
   removePhys()
   local o = createObject('WaterBlock')
-  depth = tonumber(depth) or M.DEPTH_M
-  setGridSize(o, M.PHYS_SIZE)
+  setGridSize(o, size)
   for _, f in ipairs(FIELDS) do o:setField(f[1], f[2], f[3]) end
   -- the textures too, though it is never drawn: without them each move logged "Texture missing: " (an empty name)
   -- twice (342 log errors in a 33 min drive, BeamNG 0.40.4, 2026-10-30)
   for _, x in ipairs(TEXTURES) do o:setField(x[1], 0, exists(x[2]) and x[2] or x[3]) end
-  o:setField('gridElementSize', 0, tostring(M.PHYS_SIZE / 16))
+  o:setField('gridElementSize', 0, tostring(size / 16))
   o:setPosition(vec3(p.x, p.y, z))
-  o:setScale(vec3(M.PHYS_SIZE, M.PHYS_SIZE, depth))
+  o:setScale(vec3(size, size, 2 * depth))
   o.canSave = false
   o:registerObject(M.PHYS_NAME)
   if scenetree.MissionGroup then scenetree.MissionGroup:addObject(o) end
   if o.setRenderEnabled then o:setRenderEnabled(false) end
-  phys = { id = o:getId(), x = p.x, y = p.y, z = z, depth = depth }
+  phys = { id = o:getId(), x = p.x, y = p.y, z = z, size = size, depth = depth }
   M.physMade = M.physMade + 1
 end
 
 local function create(key, t)
+  if (t.depth or M.DEPTH_M / 2) <= .01 then made[key] = { t = t }; return end
   local o = createObject('WaterBlock')
-  local depth = tonumber(t.depth) or M.DEPTH_M
   setGridSize(o, t.size)
   for _, f in ipairs(FIELDS) do o:setField(f[1], f[2], f[3]) end
   if key:sub(1, 1) == 'L' then
@@ -227,7 +228,7 @@ local function create(key, t)
   end
   o:setPosition(vec3(t.x, t.y, t.z))
   -- a little larger than its square: tilted neighbours meet without a hairline gap (2026-10-13)
-  o:setScale(vec3(t.size + M.TILE_OVERLAP_M, t.size + M.TILE_OVERLAP_M, depth))
+  o:setScale(vec3(t.size + M.TILE_OVERLAP_M, t.size + M.TILE_OVERLAP_M, 2 * (t.depth or M.DEPTH_M / 2)))
   -- after the scale: the engine warns ("gridSize cannot be > scale", meaning this one) when it exceeds the scale, 100 m
   -- before setScale (an 8 km tile's 128 m, 2026-10-17)
   o:setField('gridElementSize', 0, tostring(math.max(4, t.size / 64)))
@@ -242,13 +243,91 @@ local function inside(t, p)
   return math.abs(p.x - t.x) <= t.size / 2 and math.abs(p.y - t.y) <= t.size / 2
 end
 
+local function sameTile(a, b)
+  return b and a.x == b.x and a.y == b.y and a.z == b.z and a.size == b.size and a.nx == b.nx and a.ny == b.ny
+    and (a.depth or M.DEPTH_M / 2) == (b.depth or M.DEPTH_M / 2)
+end
+local function sameRiver(a, b)
+  if a == b then return true end
+  if not a or not b or a.flow ~= b.flow or a.kind ~= b.kind or #a.nodes ~= #b.nodes then return false end
+  for i, n in ipairs(a.nodes) do for j = 1, 5 do if n[j] ~= b.nodes[i][j] then return false end end end
+  return true
+end
+local function replan(protectionChanged)
+  if not rawWant then return end
+  want = { anchorId = rawWant.anchorId, shores = rawWant.shores,
+    tiles = waterguard.blocks(rawWant.tiles, segments, M.DEPTH_M / 2),
+    rivers = waterguard.rivers(rawWant.rivers, segments) }
+  -- Synchronous removal is intentional: roads.update runs before sea.update. No old deep fluid volume may
+  -- survive until after the new tunnel collision has been published, even when creations span many frames.
+  for key, m in pairs(made) do
+    if not sameTile(m.t, want.tiles[key]) then
+      local o = m.id and scenetree.findObjectById(m.id); if o then o:delete() end
+      made[key] = nil
+      fluidDirty = true
+    end
+  end
+  for key, id in pairs(madeRivers) do
+    if not sameRiver(riverData[key], want.rivers[key]) then
+      local o = scenetree.findObjectById(id); if o then o:delete() end
+      madeRivers[key], riverData[key], riverBox[key], riverHidden[key] = nil, nil, nil, nil
+      fluidDirty = true
+    end
+  end
+  if protectionChanged or fluidDirty then removePhys(); physStale, fluidDirty = true, true end
+  M.riversVersion = M.riversVersion + 1
+end
+local function rebuildGuards()
+  local records = {}; for id, r in pairs(guardRecords) do records[id] = r.record end
+  segments = waterguard.segments(records)
+  replan(true)
+end
+
+-- token identifies a road tile INSTANCE, not its reusable tile key. Object references retain it through
+-- time-sliced deletion, content swaps and disconnects. Records carry geodetic floor points from the server.
+function M.protect(token, records, anchor)
+  if not anchor or type(records) ~= 'table' or #records == 0 or guardOwners[token] then return end
+  local ids, changed = {}, false
+  for _, r in ipairs(records) do
+    if type(r.nodes) == 'table' and #r.nodes >= 2 and type(r.id) == 'string' and r.r and r.h then
+      local entry = guardRecords[r.id]
+      if not entry then
+        local nodes = {}
+        for _, p in ipairs(r.nodes) do nodes[#nodes + 1] = { anchor:geodeticToWorld(p[1], p[2], p[3]) } end
+        entry = { refs = 0, geo = r, record = { nodes = nodes, r = r.r, h = r.h } }
+        guardRecords[r.id], changed = entry, true
+      end
+      if not ids[r.id] then ids[r.id] = true; entry.refs = entry.refs + 1 end
+    end
+  end
+  guardOwners[token] = { refs = 1, ids = ids }
+  if changed then rebuildGuards() end
+  return token
+end
+function M.retain(token)
+  if guardOwners[token] then guardOwners[token].refs = guardOwners[token].refs + 1 end
+end
+function M.release(token)
+  local owner = guardOwners[token]
+  if not owner then return end
+  owner.refs = owner.refs - 1
+  if owner.refs > 0 then return end
+  guardOwners[token] = nil
+  local changed = false
+  for id in pairs(owner.ids) do
+    local entry = guardRecords[id]; entry.refs = entry.refs - 1
+    if entry.refs == 0 then guardRecords[id], changed = nil, true end
+  end
+  if changed then rebuildGuards() end
+end
+
 -- A 'sea' message: { anchorId, tiles = { {key, x, y, z, size, nx, ny}, ... } }.
 function M.onMessage(msg)
   local tiles = {}
   for _, r in ipairs(type(msg.tiles) == 'table' and msg.tiles or {}) do
     if type(r) == 'table' and #r >= 7 then
       tiles[tostring(r[1])] = { x = tonumber(r[2]), y = tonumber(r[3]), z = tonumber(r[4]), size = tonumber(r[5]),
-        nx = tonumber(r[6]), ny = tonumber(r[7]), depth = tonumber(r[8]) or M.DEPTH_M }
+        nx = tonumber(r[6]), ny = tonumber(r[7]) }
     end
   end
   local rivers = {}
@@ -263,8 +342,8 @@ function M.onMessage(msg)
       shores[tostring(r[1])] = { kind = r[2], nodes = r[3] }
     end
   end
-  want = { anchorId = msg.anchorId, tiles = tiles, rivers = rivers, shores = shores }
-  M.riversVersion = M.riversVersion + 1
+  rawWant = { anchorId = msg.anchorId, tiles = tiles, rivers = rivers, shores = shores }
+  replan(false)
 end
 
 -- The server's rivers (key -> { kind, flow, nodes = { {x, y, z, width, depth}, ... } }) and their anchor, or nil.
@@ -289,7 +368,7 @@ end
 
 -- Hide / show the made Rivers by their distance from the camera (RIVER_HIDE_M / RIVER_SHOW_M).
 local function cullRivers(now)
-  if riversParked or now - lastCull < M.RIVER_CULL_S then return end
+  if now - lastCull < M.RIVER_CULL_S then return end
   lastCull = now
   local cam = getCameraPosition and getCameraPosition()
   if not cam then return end
@@ -308,9 +387,7 @@ local function cullRivers(now)
       end
       if b then
         local d = M.boxDistance(b, cam)
-        if tunnelHide then              -- (a tunnel under a river: its surface may not cut through the tube)
-          if not riverHidden[key] then o:setHidden(true); riverHidden[key] = true end
-        elseif riverHidden[key] then
+        if riverHidden[key] then
           if d < M.RIVER_SHOW_M then o:setHidden(false); riverHidden[key] = nil end
         elseif d > M.RIVER_HIDE_M then
           o:setHidden(true); riverHidden[key] = true
@@ -330,7 +407,7 @@ function M.update(anchorId, player)
   if madeAnchor ~= anchorId then removeAll(); madeAnchor = anchorId end
   for key, m in pairs(made) do
     if not want.tiles[key] then
-      local o = scenetree.findObjectById(m.id)
+      local o = m.id and scenetree.findObjectById(m.id)
       if o then o:delete() end
       made[key] = nil
     end
@@ -342,95 +419,74 @@ function M.update(anchorId, player)
       madeRivers[key], riverBox[key], riverHidden[key] = nil, nil, nil
     end
   end
-  -- a tunnel under a river: park every River (delete: a hidden River still has its volume and pushes the car)
-  local tunneledNow = false
-  if player then
-    -- inside a tunnel, or approaching one: its ramp is outside the sound space, but a river's flat tile can lie
-    -- across it before the portal (Rotherhithe's approach showed a wall of water, 2026-11-08)
-    tunneledNow = (ambience.inTunnel(player.x, player.y, player.z) and true)
-      or (ambience.nearRoof and ambience.nearRoof(player.x, player.y, player.z, M.TUNNEL_NEAR_M) and true) or false
-    if not tunneledNow and player.z < 0.0 then
-      -- a tunnel whose sound space is not loaded (or a flooded-looking bore): below a water surface is dry
-      -- (the depth gate keeps the normal drive above the coast from walking the river nodes every frame)
-      local t = tileAt(player)
-      if t and player.z < t.z - 1.0 then
-        tunneledNow = true
-      else
-        for _, r in pairs(want.rivers or {}) do
-          for _, n in ipairs(r.nodes or {}) do
-            local dx, dy = player.x - n[1], player.y - n[2]
-            if math.sqrt(dx * dx + dy * dy) <= (tonumber(n[4]) or 10) / 2 + 5
-                and player.z < (tonumber(n[3]) or 0) - 1.0 then
-              tunneledNow = true
-              break
-            end
-          end
-          if tunneledNow then break end
-        end
-      end
+  -- (a rebuilt water volume re-places a slow car only when it is in that water: with "nudge = fluidDirty" every
+  -- tunnel or water-guard change of the streamed road tiles reset a stopped car in place, wherever it was, every few
+  -- seconds or minutes: players' reports on the dev builds since PR #822, 2026-11-08)
+  local n, nudge = 0, false
+  if fluidDirty and player then
+    for _, t in pairs(want.tiles) do
+      if inside(t, player) and player.z < t.z + 1 then nudge = true; break end
     end
   end
-  if tunneledNow and not riversParked then
+  fluidDirty = false
+  local tunneledNow = false
+  if player then
+    tunneledNow = (ambience.inTunnel(player.x, player.y, player.z) and true)
+      or (ambience.nearRoof and ambience.nearRoof(player.x, player.y, player.z, M.TUNNEL_NEAR_M) and true) or false
+    if not tunneledNow and player.z < 0 then
+      local t = tileAt(player)
+      if t and player.z < t.z - 1.0 then tunneledNow = true end
+    end
+  end
+  if tunneledNow then
     for key, id in pairs(madeRivers) do
       local o = scenetree.findObjectById(id)
       if o then o:delete() end
+      madeRivers[key], riverBox[key], riverHidden[key] = nil, nil, nil
     end
-    madeRivers, riverBox, riverHidden = {}, {}, {}
-    riversParked = true
-  elseif not tunneledNow and riversParked then
-    riversParked = false                     -- (M.update's create loop brings them back, CREATE_PER_FRAME at a time)
+    removePhys()
   end
-  tunnelHide = tunneledNow
-  local n, nudge = 0, false
-  for key, r in pairs(want.rivers) do
-    if not madeRivers[key] and not riversParked then
-      if n >= M.CREATE_PER_FRAME then break end
-      createRiver(key, r)
-      n = n + 1
+  if not tunneledNow then
+    for key, r in pairs(want.rivers) do
+      if not madeRivers[key] then
+        if n >= M.CREATE_PER_FRAME then break end
+        createRiver(key, r)
+        n = n + 1
+      end
     end
   end
   for key, t in pairs(want.tiles) do
-    if not made[key] then
+    local nearTunnel = tunneledNow and player and math.hypot(player.x - t.x, player.y - t.y) <= M.TUNNEL_CLEAR_M
+    if nearTunnel and made[key] then
+      local o = made[key].id and scenetree.findObjectById(made[key].id)
+      if o then o:delete() end
+      made[key] = nil
+    end
+    if not made[key] and not nearTunnel then
       if n >= M.CREATE_PER_FRAME then break end
       create(key, t)
       n = n + 1
       if player and inside(t, player) and player.z < t.z + 1 then nudge = true end
     end
   end
-  if player then
+  if player and not tunneledNow then
     local t = tileAt(player)
-    -- inside a tunnel / roofed space (or on its approach): no water surface or volume may cut through the tube
-    -- (Rotherhithe and every river tunnel read as flooded, 2026-11-07/08); hide the tile the player is under and
-    -- those round it, restore them on leaving
-    for key, m in pairs(made) do
-      local dt = m.t
-      local dx = math.max(0, math.abs(player.x - dt.x) - dt.size / 2)
-      local dy = math.max(0, math.abs(player.y - dt.y) - dt.size / 2)
-      local hide = tunnelHide and (dt == t or dx * dx + dy * dy <= M.TUNNEL_CLEAR_M * M.TUNNEL_CLEAR_M)
-      if (m.tunnelHidden or false) ~= (hide and true or false) then
-        local o = scenetree.findObjectById(m.id)
-        if o then
-          if o.setHidden then o:setHidden(hide)
-          elseif o.setRenderEnabled then o:setRenderEnabled(not hide) end
-        end
-        m.tunnelHidden = hide or nil
-      end
-    end
-    if tunnelHide then
-      if phys then removePhys() end
-    elseif not t then
+    if not t then
       if phys then removePhys() end
     else
       -- the tile's (tilted) surface under the player: a river falls across its tile
       local z = t.z - (t.nx or 0) * (player.x - t.x) - (t.ny or 0) * (player.y - t.y)
-      local depth = t.depth or M.DEPTH_M
-      if player.z < z - depth / 2 - 1 then
-        -- under the block's bed (a rail or road tunnel under the river): no water volume around the car
-        if phys then removePhys() end
-      elseif (physStale and n == 0) or not phys or math.abs(player.x - phys.x) > M.PHYS_SIZE / 2 - M.PHYS_MARGIN
-          or math.abs(player.y - phys.y) > M.PHYS_SIZE / 2 - M.PHYS_MARGIN or math.abs(z - phys.z) > 0.05
-          or math.abs(depth - (phys.depth or depth)) > 0.05 then
-        makePhys(player, z, depth)
+      local size = M.PHYS_SIZE
+      local depth = waterguard.cap({ x = player.x, y = player.y, z = z, size = size }, segments, M.DEPTH_M / 2)
+      while depth <= .01 and size > 4 do
+        size = size / 2
+        depth = waterguard.cap({ x = player.x, y = player.y, z = z, size = size }, segments, M.DEPTH_M / 2)
+      end
+      if depth <= .01 then removePhys()
+      elseif (physStale and n == 0) or not phys or math.abs(player.x - phys.x) > math.max(1, phys.size / 4)
+          or math.abs(player.y - phys.y) > math.max(1, phys.size / 4) or math.abs(z - phys.z) > 0.05
+          or depth < phys.depth - .001 or size ~= phys.size then
+        makePhys(player, z, size, depth)
         physStale = false
         if player.z < z + 1 then nudge = true end      -- in the water: its physics must take this one
       end
@@ -454,7 +510,7 @@ end
 -- The wanted tiles and rivers are mapped (p_new = R*p + t, a tile's normal turned by R) and become newAnchorId's; the
 -- made blocks take their new place and tilt, the physics block its new place; rivers (splines in world coordinates)
 -- are made again from the mapped nodes. The server's next 'sea' message replaces the set as usual.
-function M.transform(xf, newAnchorId)
+function M.transform(xf, newAnchorId, anchor)
   local ox, oy, oz = xf:apply(0, 0, 0)
   local function turn(nx, ny)
     local nz = math.sqrt(math.max(0, 1 - nx * nx - ny * ny))
@@ -465,7 +521,7 @@ function M.transform(xf, newAnchorId)
     t.x, t.y, t.z = xf:apply(t.x, t.y, t.z)
     t.nx, t.ny = turn(t.nx or 0, t.ny or 0)
   end
-  if want and want.anchorId == madeAnchor then
+  if want and want.anchorId ~= newAnchorId then
     for _, t in pairs(want.tiles) do mapTile(t) end
     for _, r in pairs(want.rivers) do
       for _, n in ipairs(r.nodes) do n[1], n[2], n[3] = xf:apply(n[1], n[2], n[3]) end
@@ -478,7 +534,7 @@ function M.transform(xf, newAnchorId)
   end
   for key, m in pairs(made) do
     if m.t ~= (want and want.tiles or {})[key] then mapTile(m.t) end   -- (the same table as want's: mapped above)
-    local o = scenetree.findObjectById(m.id)
+    local o = m.id and scenetree.findObjectById(m.id)
     if o then
       local t = m.t
       local n = math.sqrt(t.nx * t.nx + t.ny * t.ny)
@@ -499,18 +555,39 @@ function M.transform(xf, newAnchorId)
     if o then o:setPosition(vec3(phys.x, phys.y, phys.z)) end
   end
   if madeAnchor ~= nil then madeAnchor = newAnchorId end
+  if rawWant and rawWant.anchorId ~= newAnchorId then
+    for _, t in pairs(rawWant.tiles) do
+      -- With no exclusions want shares these tables and they were already mapped above.
+      local shared = false; for _, w in pairs(want and want.tiles or {}) do if w == t then shared = true; break end end
+      if not shared then mapTile(t) end
+    end
+    for key, r in pairs(rawWant.rivers) do
+      if r ~= (want and want.rivers or {})[key] then
+        for _, p in ipairs(r.nodes) do p[1], p[2], p[3] = xf:apply(p[1], p[2], p[3]) end
+      end
+    end
+    rawWant.anchorId = newAnchorId
+  end
+  for _, r in pairs(guardRecords) do
+    for i, p in ipairs(r.record.nodes) do
+      if anchor then r.record.nodes[i] = { anchor:geodeticToWorld(unpack(r.geo.nodes[i])) }
+      else p[1], p[2], p[3] = xf:apply(p[1], p[2], p[3]) end
+    end
+  end
+  if next(guardRecords) then rebuildGuards() end
 end
 
 -- Disconnect, a new server session, mod unload: no tiles until the server says so again.
 function M.clear()
-  want = nil
+  want, rawWant = nil, nil
   M.riversVersion = M.riversVersion + 1
   removeAll()
 end
 
 -- Level end: the level deletes its objects itself.
 function M.reset()
-  want, made, madeRivers, madeAnchor, phys, physStale = nil, {}, {}, nil, nil, false
+  want, rawWant, made, madeRivers, riverData, madeAnchor, phys, physStale = nil, nil, {}, {}, {}, nil, nil, false
+  guardOwners, guardRecords, segments, fluidDirty = {}, {}, {}, false
   riverBox, riverHidden = {}, {}
   M.riversVersion = M.riversVersion + 1
 end
@@ -522,7 +599,10 @@ function M.status()
   for _ in pairs(want and want.tiles or {}) do w = w + 1 end
   local rv = 0
   for _ in pairs(madeRivers) do rv = rv + 1 end
-  return { tiles = n, want = w, created = M.created, nudges = M.nudges, physMade = M.physMade,
+  local guards, owners = 0, 0
+  for _ in pairs(guardRecords) do guards = guards + 1 end
+  for _ in pairs(guardOwners) do owners = owners + 1 end
+  return { tiles = n, want = w, guards = guards, guardOwners = owners, created = M.created, nudges = M.nudges, physMade = M.physMade,
     phys = phys and phys.z or nil, rivers = rv, riversMade = M.riversMade, riverErrors = M.riverErrors,
     riversHidden = M.riversHidden }
 end
