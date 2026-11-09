@@ -1177,6 +1177,22 @@ def _fit_floor(values, floor):
     return np.interp(np.linspace(0.0, 1.0, len(floor)), np.linspace(0.0, 1.0, len(values)), values)
 
 
+TUNNEL_WET_MIN_M = 10.0     # m: the least a bed is laid under the submerged ground where water covers the line (the road
+                            # code's TUNNEL_WET_DEPTH_M: vault 2.9 m under the bed, clear of the water)
+
+
+def _wet_envelope(s, wet_mask, grade=0.04):
+    """0..1 per point of arcs s: 1 on a point under water, falling to 0 at the dive's reach (TUNNEL_WET_MIN_M over `grade`)
+    either side of the nearest one, so a bed can run from the bank down under the water at a train's grade. Pure."""
+    s = np.asarray(s, np.float64)
+    sw = s[np.asarray(wet_mask, bool)]
+    if not len(sw):
+        return np.zeros(len(s))
+    k = np.clip(np.searchsorted(sw, s), 1, len(sw) - 1) if len(sw) > 1 else np.zeros(len(s), np.int64)
+    d = np.abs(s - sw[k]) if len(sw) == 1 else np.minimum(np.abs(s - sw[k]), np.abs(s - sw[k - 1]))
+    return np.clip(1.0 - d / (TUNNEL_WET_MIN_M / grade), 0.0, 1.0)
+
+
 def _tunnel_floor(xy, g, wet_mask=None, depth=0.0, ramp=None):
     """A rail tunnel's bed line along xy (k, 2): the lower convex hull of the ground g over it (roads.tunnel_sections,
     the line under a hill with its ends at the portals), laid TUNNEL_DEPTH_M under the ground where water covers it
@@ -1184,6 +1200,7 @@ def _tunnel_floor(xy, g, wet_mask=None, depth=0.0, ramp=None):
     faded in over `ramp`). Pure."""
     s = _arc(np.asarray(xy, np.float64))
     floor, _kinds = roads.tunnel_sections(s, np.asarray(g, np.float64))
+    base = np.asarray(floor, np.float64)
     if depth:
         r = TUNNEL_WET_RAMP_M if ramp is None else float(ramp)
         share = np.minimum(np.clip(s / r, 0.0, 1.0), np.clip((s[-1] - s) / r, 0.0, 1.0))
@@ -1193,6 +1210,10 @@ def _tunnel_floor(xy, g, wet_mask=None, depth=0.0, ramp=None):
         k = np.ones(2 * r + 1) / (2 * r + 1)
         share = np.convolve(wet_mask.astype(np.float64), k, mode="same")
         floor = floor - TUNNEL_DEPTH_M * _fit_floor(share, floor)
+        # a short river or canal crossing: the Channel-sized ramp above barely lowers it, leaving the bore in the bed
+        # with the water over it (flooded tunnels, 2026-11-09): wherever water covers the line the bed is at least
+        # TUNNEL_WET_MIN_M under the (submerged) ground, reached from the banks at a train's grade
+        floor = np.minimum(floor, base - TUNNEL_WET_MIN_M * _fit_floor(_wet_envelope(s, wet_mask), base))
     return np.asarray(floor, np.float64)
 
 
@@ -1333,6 +1354,7 @@ def _separate_crossing_tunnels(rails, floors):
                     or xa[:, 1].max() < xb[:, 1].min() - 9.0 or xb[:, 1].max() < xa[:, 1].min() - 9.0):
                 continue
             hits = _crossing_arcs(xa, xb)
+            crossed = bool(hits)
             if not hits:
                 d, ia, ib = _min_pair(xa, xb)
                 if d > near:
@@ -1341,8 +1363,8 @@ def _separate_crossing_tunnels(rails, floors):
             for sca, scb in hits:
                 ka = int(np.clip(np.searchsorted(arc[na], sca), 0, len(xa) - 1))
                 kb = int(np.clip(np.searchsorted(arc[nb], scb), 0, len(xb) - 1))
-                if abs(float(np.dot(tan[na][ka], tan[nb][kb]))) > TUNNEL_CROSS_PARALLEL:
-                    continue                # beside each other (a shared bore): not a crossing
+                if not crossed and abs(float(np.dot(tan[na][ka], tan[nb][kb]))) > TUNNEL_CROSS_PARALLEL:
+                    continue                # a near approach beside each other, not a crossing
                 za = float(np.interp(sca, arc[na], floors[na]))     # (an earlier crossing may have lowered them)
                 zb = float(np.interp(scb, arc[nb], floors[nb]))
                 gap = abs(za - zb)
@@ -1356,56 +1378,6 @@ def _separate_crossing_tunnels(rails, floors):
                     floors[nb] = _dive(arc[nb], floors[nb], scb, need - gap)
                 else:
                     floors[na] = _dive(arc[na], floors[na], sca, need - gap)
-
-
-def _separate_crossing_tunnels_old(rails, floors):
-    """Two tunnel beds at one depth crossed and their tubes clipped through each other (the user's London lines,
-    2026-11-08). The lower bed of a crossing pair is laid TUNNEL_STAGGER_M deeper in a smooth window round the
-    crossing, so one tube passes under the other; parallel tracks (a shared bore) are left alone. Each pair is one
-    vectorised nearest-point pass (a Python loop over samples took 2.3 s for a 12-track junction)."""
-    keys = [n for n in floors if len(rails[n][3]) == len(floors[n])]
-    if len(keys) < 2:
-        return
-    for ai in range(len(keys)):
-        na = keys[ai]
-        xa = np.asarray(rails[na][3], np.float64)
-        sa = _arc(xa)
-        ta = np.gradient(xa[:, :2], axis=0)
-        ta /= np.maximum(np.hypot(ta[:, 0], ta[:, 1]), 1e-9)[:, None]
-        for bi in range(ai + 1, len(keys)):
-            nb = keys[bi]
-            xb = np.asarray(rails[nb][3], np.float64)
-            za = floors[na]                 # (an earlier crossing may already have lowered it)
-            zb = floors[nb]
-            if (xa[:, 0].max() < xb[:, 0].min() - 9.0 or xb[:, 0].max() < xa[:, 0].min() - 9.0
-                    or xa[:, 1].max() < xb[:, 1].min() - 9.0 or xb[:, 1].max() < xa[:, 1].min() - 9.0):
-                continue
-            d, ia, ib = _min_pair(xa, xb)
-            if d > TUNNEL_BORE_W + 2.0 * 1.4 + 1.0:
-                continue
-            kk = min(len(xb) - 2, max(0, ib))
-            tb = (xb[kk + 1, :2] - xb[kk, :2])
-            n = float(np.hypot(*tb))
-            if n < 1e-9:
-                continue
-            tb = tb / n
-            cosang = abs(float(np.dot(ta[min(len(ta) - 1, max(0, ia)), :2], tb)))
-            if cosang > TUNNEL_CROSS_PARALLEL:
-                continue                    # beside each other (a shared bore): not a crossing
-            zal = float(za[min(len(za) - 1, max(0, ia))])
-            zbl = float(zb[ib])
-            if abs(zal - zbl) >= roadmesh.TUNNEL_H + 1.0:
-                continue                    # already one above the other
-            lower = nb if zbl <= zal else na
-            xy = xb if lower == nb else xa
-            s_l = _arc(xy)
-            sc = float(sa[ia]) if lower == na else float(s_l[ib])
-            bump = np.cos(np.clip((s_l - sc) / TUNNEL_STAGGER_RAMP_M * (math.pi / 2.0), -math.pi / 2.0,
-                                  math.pi / 2.0)) ** 2
-            if lower == nb:
-                floors[nb] = zb - TUNNEL_STAGGER_M * bump
-            else:
-                floors[na] = za - TUNNEL_STAGGER_M * bump
 
 
 def _tunnel_portals(rails):
@@ -1426,6 +1398,113 @@ def _tunnel_portals(rails):
     return out
 
 
+MIN_BORE_W = 4.4            # m: the narrowest a bore is squeezed to beside a neighbour (the ballast's 3.6 m and a little)
+BORE_PARALLEL_DOT = 0.98    # directions within ~11 deg: beside each other (a shared bore), not crossing
+
+
+def _bore_widths(rails, floors):
+    """{part: bore width (m)} of the tunnel parts that run beside another at a depth their tubes share, narrowed so the
+    two tubes (each its bore plus a roadmesh.TUNNEL_SHOULDER either side) just touch instead of passing through each
+    other: a station throat's parallel tracks stood as overlapping tubes (the user, 2026-11-09). Beside a neighbour for
+    at least ~20 m (a crossing is not: _separate_crossing_tunnels). Parts with no such neighbour are absent (they keep
+    TUNNEL_BORE_W). Where tracks are closer than MIN_BORE_W allows the tubes still overlap. Pure."""
+    keys = [n for n in floors if len(rails[n][3]) == len(floors[n])]
+    out = {}
+    if len(keys) < 2:
+        return out
+    sh = roadmesh.TUNNEL_SHOULDER
+    reach = TUNNEL_BORE_W + 2.0 * sh
+    xy = {n: np.asarray(rails[n][3], np.float64)[:, :2] for n in keys}
+    arc = {n: _arc(xy[n]) for n in keys}
+    dirs = {}
+    for n in keys:
+        d = xy[n][-1] - xy[n][0]
+        dirs[n] = d / max(float(np.hypot(*d)), 1e-9)
+    for n in keys:
+        xa, sa = xy[n], arc[n]
+        if len(xa) < 2 or sa[-1] < 20.0:
+            continue
+        ss = np.arange(0.0, sa[-1] + 1e-6, 10.0)
+        P = np.c_[np.interp(ss, sa, xa[:, 0]), np.interp(ss, sa, xa[:, 1])]
+        zmed = float(np.median(floors[n]))
+        best = None
+        for m in keys:
+            xb = xy[m]
+            if m == n or len(xb) < 2:
+                continue
+            if abs(zmed - float(np.median(floors[m]))) >= roadmesh.TUNNEL_H:
+                continue                    # another level: a bore above or below, not beside
+            if abs(float(np.dot(dirs[n], dirs[m]))) < BORE_PARALLEL_DOT:
+                continue                    # crossing it, not running beside it
+            if (xa[:, 0].max() < xb[:, 0].min() - reach or xb[:, 0].max() < xa[:, 0].min() - reach
+                    or xa[:, 1].max() < xb[:, 1].min() - reach or xb[:, 1].max() < xa[:, 1].min() - reach):
+                continue
+            d, _q = roads._line_near(P, xb)
+            near = d < reach
+            if near.mean() >= 0.5:          # beside it for half the run at least; a crossing is only near its point
+                dm = float(np.median(d[near]))
+                best = dm if best is None else min(best, dm)
+        if best is not None:
+            w = float(np.clip(best - 2.0 * sh - 0.1, MIN_BORE_W, TUNNEL_BORE_W))
+            if w < TUNNEL_BORE_W - 0.05:
+                out[n] = round(w, 2)
+    return out
+
+
+TUNNEL_TWIN_M = 7.5         # m between parallel tunnel centre lines: one tube round both (NRails' TUNNEL_TWIN_M)
+
+
+def _twin_tubes(rails, floors):
+    """{part: {"skip": (k,) bool, "center": (k, 2), "width": (k,)}} of parallel tunnel parts at one depth within
+    TUNNEL_TWIN_M: the first part's tube moves to the midpoint and widens to cover both, and the second's samples
+    there are skipped (its own tube would pass through the wider one). One partner per leader, deterministic by the
+    parts' order. Pure."""
+    keys = [n for n in floors if len(rails[n][3]) == len(floors[n])]
+    out = {}
+    if len(keys) < 2:
+        return out
+    xy = {n: np.asarray(rails[n][3], np.float64)[:, :2] for n in keys}
+    zmed = {n: float(np.median(floors[n])) for n in keys}
+    absorbed = set()
+    for ai, na in enumerate(keys):
+        if na in absorbed:
+            continue
+        xa = xy[na]
+        if len(xa) < 3:
+            continue
+        best = None
+        for nb in keys[ai + 1:]:
+            if nb in absorbed or len(xy[nb]) < 2:
+                continue
+            xb = xy[nb]
+            if (xa[:, 0].max() < xb[:, 0].min() - TUNNEL_TWIN_M or xb[:, 0].max() < xa[:, 0].min() - TUNNEL_TWIN_M
+                    or xa[:, 1].max() < xb[:, 1].min() - TUNNEL_TWIN_M or xb[:, 1].max() < xa[:, 1].min() - TUNNEL_TWIN_M):
+                continue
+            if abs(zmed[na] - zmed[nb]) >= roadmesh.TUNNEL_H:
+                continue                    # another level: not a twin bore
+            d, q = roads._line_near(xa, xb)
+            twin = (d > 0.5) & (d <= TUNNEL_TWIN_M)
+            if int(twin.sum()) < max(4, int(0.25 * len(xa))):
+                continue                    # beside it only briefly (a crossing / a throat merge): not a twin bore
+            dm = float(np.median(d[twin]))
+            if best is None or dm < best[0]:
+                best = (dm, nb, d, q, twin)
+        if best is None:
+            continue
+        _dm, nb, d, q, twin = best
+        xb = xy[nb]
+        db, _qb = roads._line_near(xb, xa)
+        center = xa.copy()
+        width = np.full(len(xa), TUNNEL_BORE_W)
+        center[twin] = (xa[twin] + q[twin]) / 2.0
+        width[twin] = TUNNEL_BORE_W + d[twin]
+        out[na] = {"skip": np.zeros(len(xa), bool), "center": center, "width": width}
+        out[nb] = {"skip": db <= TUNNEL_TWIN_M, "center": xb.copy(),
+                   "width": np.full(len(xb), TUNNEL_BORE_W)}
+        absorbed.add(nb)
+    return out
+
+
 def block_tunnel_holes(frame, cells, keep, cx, cy, square, ground, wet=None):
     """Where a terrain block's rail tunnel mouths are holes (roads.tunnel_hole_mask, one part at a time so two parallel
     bores are not merged into a twin tube): the samples over a bore whose ground lies between its floor and vault.
@@ -1443,13 +1522,13 @@ def block_tunnel_holes(frame, cells, keep, cx, cy, square, ground, wet=None):
         return None
     floors = tunnel_floors(rails, frame, ground, wet, levels)
     ports = _tunnel_portals(rails)
-    spec = types.SimpleNamespace(width=TUNNEL_BORE_W)
+    bw = _bore_widths(rails, floors)
     mask = np.zeros(u.shape, bool)
     for n, fid, xy in parts_:
         z = floors.get(n)
         if z is None:
             continue
-        mask |= roads.tunnel_hole_mask([(fid, spec, xy, z, None)], u, cx, cy, square,
+        mask |= roads.tunnel_hole_mask([(fid, types.SimpleNamespace(width=bw.get(n, TUNNEL_BORE_W)), xy, z, None)], u, cx, cy, square,
                                        heights={fid: roadmesh.TUNNEL_H},
                                        mouths={fid: ports.get(n, (True, True))})
     return mask if mask.any() else None
@@ -1762,12 +1841,12 @@ def _rail_arches(mesh, xy, top, crossers):
         _rail_arch(mesh, p, u, v, z0, crown, hw, RAIL_ARCH_LEN_M, mi)
 
 
-def _tunnel_bed(mesh, p, uu, t, v, ballast, concrete):
+def _tunnel_bed(mesh, p, uu, t, v, ballast, concrete, bore_w=None):
     """A tunnel's track bed: a concrete invert across the bore with the ballast on it, the walkways beside the ballast
     up to the tube's walls, its sides down to the invert (roadmesh.tunnel draws the tube around this floor)."""
     up = np.array([0.0, 0.0, 1.0])
     out_l = np.c_[uu, np.zeros(len(p))]
-    hw = TUNNEL_BORE_W / 2 + roadmesh.TUNNEL_SHOULDER
+    hw = (bore_w or TUNNEL_BORE_W) / 2 + roadmesh.TUNNEL_SHOULDER
     inv = t - BALLAST_H
     mesh.strip(np.c_[p + uu * hw, inv], np.c_[p - uu * hw, inv], 0.0, 2 * hw / 3.0, v, concrete, up)
     L = np.c_[p + uu * BALLAST_TOP_M, t]
@@ -1782,11 +1861,11 @@ def _tunnel_bed(mesh, p, uu, t, v, ballast, concrete):
     mesh.strip(R, np.c_[p - uu * hw, t], 0.0, (hw - BALLAST_TOP_M) / 1.5, v, concrete, up)
 
 
-def _tube_chunk(p, zb, portal):
+def _tube_chunk(p, zb, portal, bore_w=None):
     """A roadmesh.tunnel chunk of a rail tunnel run: its floor at the ballast top, the full tunnel height, its portal
     ends (the ends of the mapped tunnel range, not a tile cut)."""
     n = np.c_[np.asarray(p, np.float64)[:, :2], np.asarray(zb, np.float64) + BALLAST_H]
-    return {"m": "m_gm_concrete_plain", "w": TUNNEL_BORE_W, "tl": 10.0, "p": 20,
+    return {"m": "m_gm_concrete_plain", "w": bore_w or TUNNEL_BORE_W, "tl": 10.0, "p": 20,
             "n": [[round(float(q), 3) for q in pt] for pt in n],
             "fixed": True, "tunnel": True, "tube_only": True, "tunnel_h": roadmesh.TUNNEL_H,
             "portal": (bool(portal[0]), bool(portal[1]))}
@@ -2064,6 +2143,8 @@ def tile_mesh(frame, tx, ty, cells, ground, sign_style=None, far_ground=None, we
     gaps = _neighbour_gaps(rails, [zb for zb, _g in prof])
     tunnel_z = tunnel_floors(rails, frame, ground, wet, levels) if any(k == "tunnel" for _f, _c, k, _xy in rails) else {}
     tunnel_ports = _tunnel_portals(rails) if tunnel_z else {}
+    bore_w = _bore_widths(rails, tunnel_z) if tunnel_z else {}
+    twins = _twin_tubes(rails, tunnel_z) if tunnel_z else {}
     crossers = []
     if cr:                                          # (one ground call for all of them: its cost is per call)
         zc = np.asarray(ground(np.concatenate([ln for ln, _ in cr])), np.float64)
@@ -2119,10 +2200,22 @@ def tile_mesh(frame, tx, ty, cells, ground, sign_style=None, far_ground=None, we
                 (fl, zl), (fr, zr) = feet
                 _ballast_bed(mesh, p, uu, t, v, fl[sl], fr[sl], zl[sl], zr[sl], ballast_w)
             elif kind == "tunnel":
-                _tunnel_bed(mesh, p, uu, t, v, ballast_w, concrete)
+                _tunnel_bed(mesh, p, uu, t, v, ballast_w, concrete, bore_w.get(n))
                 if tube_out is not None:
                     mouth = tunnel_ports.get(n, (True, True))
-                    tube_out.append(_tube_chunk(p, zb[sl], (i == 0 and mouth[0], j == len(xy) - 1 and mouth[1])))
+                    tw = twins.get(n)
+                    skip = tw["skip"][sl] if tw is not None else np.zeros(len(p), bool)
+                    for a, b in _runs(skip):
+                        g0, g1 = i + a, i + b
+                        pp = xy[g0:g1 + 1].copy()
+                        ww = bore_w.get(n, TUNNEL_BORE_W)
+                        if tw is not None:
+                            pp[:, :2] = tw["center"][g0:g1 + 1]
+                            ww = max(ww, float(np.max(tw["width"][g0:g1 + 1])))
+                        tube_out.append(_tube_chunk(
+                            pp, zb[g0:g1 + 1],
+                            (g0 == 0 and mouth[0] and not bool(skip[0]),
+                             g1 == len(xy) - 1 and mouth[1] and not bool(skip[-1])), ww))
             else:
                 if cls == "tram":
                     _tram_deck(mesh, p, uu, t, v, concrete)

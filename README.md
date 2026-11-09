@@ -19,8 +19,13 @@ real curvature of the Earth.
   a road. Footways that cross the carriageway no longer become a slab in the road, and paths angled
   into forecourts are left to the ground photo.
 - **Tunnels:** river/sea water is hidden on a tunnel's approach as well as inside it, so tunnel
-  mouths no longer read as flooded; rail tunnels crossing at one depth are staggered so one bore
-  passes under the other instead of clipping through it.
+  mouths no longer read as flooded. Crossing bores are separated at every detected crossing (not one
+  per pair) with a dive capped at 4 % and level portals, and two parallel bores within 7.5 m at one
+  depth share one wide tube instead of two overlapping ones. Three or more tracks in one station
+  throat still need a group shared bore.
+- **Loading order:** a Loading settings page with a "Load first" choice: All, Roads, Train tracks /
+  tunnels or Terrain. Roads and rails share their tiles, so those two are the same hold; the ground
+  under the car always loads first, and a hold releases after two minutes so nothing starves.
 - **Stations:** a building with a rail line running through it (a station shed such as St Pancras')
   is left out instead of extruded solid, exposing the platforms and the station interior.
 - **Rail:** a branch track that merges into a through track is rounded into a turnout instead of
@@ -35,12 +40,13 @@ real curvature of the Earth.
   cache is split into **tiles**, **props/foliage** and **textures** buckets that are counted and can
   be cleared independently on the Storage page.
 
-Status: the changes above are code-verified and unit-tested; in-game validation is in progress.
-Known partial areas: pavement corner joins are short straight links rather than full mitred
-corners; switch routing is a merged route rather than selectable turnout collision; bridge
-clearance/geometry and full station platform access still need a focused pass. Performance of the
-new per-tile work is checked in the repository (switch detection and tunnel separation are the
-vectorised paths; a 40-track station throat is ~87 ms and a 12-bore tunnel junction ~62 ms).
+Status: the changes above are code-verified and unit-tested (the rail and tunnel suites pass); in-game
+validation is in progress. Known partial areas: pavement corner joins are short straight links rather
+than full mitred corners; switch routing is a merged route rather than selectable turnout collision;
+bridge clearance/geometry, full station platform access, tunnel depth accuracy, multi-track shared bores
+and the stock assets still need a focused pass. Loading order is configurable, but total load time is unchanged. Performance
+of the new per-tile work is checked in the repository (switch detection, bore widths, twin-tube merging
+and tunnel separation are the vectorised paths).
 
 Status: beta (see VERSION). Tested on BeamNG.drive 0.40.4 on Linux (Vulkan) and 0.40.3 on the Steam Deck. See
 [docs/ROADMAP.md](docs/ROADMAP.md) for what is coming.

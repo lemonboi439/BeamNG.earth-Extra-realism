@@ -52,6 +52,81 @@ class RailwayTest(unittest.TestCase):
         self.assertGreater(abs(float(z[0][50] - z[1][50])), 6.0,
                            "two bores at one depth clip; the lower now passes under the upper")
 
+    def test_a_shallow_angle_crossing_still_dives(self):
+        x = np.linspace(-200.0, 200.0, 201)
+        a = ("a", "standard_gauge", "tunnel", np.c_[x, np.zeros(201)])
+        b = ("b", "standard_gauge", "tunnel", np.c_[x, np.tan(np.radians(15.0)) * x])
+        z = railways.tunnel_floors([a, b], FRAME, lambda xy: np.full(len(xy), 10.0))
+        gap = abs(float(z[0][100] - z[1][100]))
+        self.assertGreaterEqual(gap, 8.0, "a 15 deg crossing is not a parallel bore")
+
+    def test_parallel_bores_are_narrowed_not_crossed(self):
+        for gap, expect in ((12.0, None), (8.0, 5.5), (6.0, 4.4)):
+            n = 101
+            a = ("a", "standard_gauge", "tunnel", np.c_[np.linspace(0, 500, n), np.zeros(n)])
+            b = ("b", "standard_gauge", "tunnel", np.c_[np.linspace(0, 500, n), np.full(n, gap)])
+            floors = {0: np.full(n, -2.0), 1: np.full(n, -2.0)}
+            w = railways._bore_widths([a, b], floors)
+            if expect is None:
+                self.assertEqual(w, {}, f"{gap} m apart: no overlap, no narrowing")
+            else:
+                self.assertAlmostEqual(w[0], expect, places=1)
+                self.assertAlmostEqual(w[1], expect, places=1)
+
+    def test_parallel_bores_at_one_depth_share_one_tube(self):
+        n = 101
+        a = ("a", "standard_gauge", "tunnel", np.c_[np.linspace(0, 500, n), np.zeros(n)])
+        b = ("b", "standard_gauge", "tunnel", np.c_[np.linspace(0, 500, n), np.full(n, 6.0)])
+        floors = {0: np.full(n, -2.0), 1: np.full(n, -2.0)}
+        tw = railways._twin_tubes([a, b], floors)
+        self.assertEqual(set(tw), {0, 1})
+        self.assertFalse(tw[0]["skip"].any(), "the leader keeps its tube")
+        self.assertTrue(tw[1]["skip"].all(), "the partner's own tube is skipped")
+        self.assertAlmostEqual(float(np.median(tw[0]["center"][:, 1])), 3.0, places=2)
+        self.assertAlmostEqual(float(np.median(tw[0]["width"])), 12.2, places=1,
+                               msg="one bore wide enough for both tracks")
+        # 12 m apart: no shared tube; a further-depth pair: no shared tube
+        c = ("c", "standard_gauge", "tunnel", np.c_[np.linspace(0, 500, n), np.full(n, 12.0)])
+        self.assertEqual(railways._twin_tubes([a, c], {0: np.full(n, -2.0), 1: np.full(n, -2.0)}), {})
+        deep = {0: np.full(n, -2.0), 1: np.full(n, -2.0 - railways.roadmesh.TUNNEL_H - 1.0)}
+        self.assertEqual(railways._twin_tubes([a, b], deep), {})
+
+    def test_a_crossing_is_not_narrowed_as_a_parallel_bore(self):
+        a = ("a", "standard_gauge", "tunnel", np.c_[np.linspace(-200, 200, 201), np.zeros(201)])
+        b = ("b", "standard_gauge", "tunnel", np.c_[np.linspace(-200, 200, 201),
+                                                    np.tan(np.radians(15.0)) * np.linspace(-200, 200, 201)])
+        floors = {0: np.full(201, -2.0), 1: np.full(201, -2.0)}
+        self.assertEqual(railways._bore_widths([a, b], floors), {})
+
+    def test_a_dive_keeps_its_grade_and_its_portals(self):
+        s = np.linspace(0.0, 2000.0, 2001)
+        z = np.zeros(2001)
+        out = railways._dive(s, z, 1000.0, 9.0)
+        grade = np.abs(np.diff(out) / np.diff(s))
+        self.assertLessEqual(float(grade.max()), railways.TUNNEL_STAGGER_GRADE * 1.01)
+        self.assertAlmostEqual(float(out[0]), 0.0, places=6)
+        self.assertAlmostEqual(float(out[-1]), 0.0, places=6)
+        self.assertLess(float(out[1000]), -8.0)
+
+    def test_every_crossing_of_a_pair_is_found(self):
+        x = np.linspace(-1500.0, 1500.0, 1501)
+        a = np.c_[x, np.zeros(1501)]
+        b = np.c_[x, ((x / 500.0) ** 2 - 1.0) * 300.0]
+        hits = railways._crossing_arcs(a, b)
+        self.assertEqual(len(hits), 2, "the old 70-sample test missed one of these")
+
+    def test_a_short_bore_is_not_squeezed_into_a_steep_dive(self):
+        x = np.linspace(-1500.0, 1500.0, 1501)
+        a = ("a", "standard_gauge", "tunnel", np.c_[x, np.zeros(1501)])
+        xs = np.linspace(-20.0, 20.0, 41)
+        b = ("b", "standard_gauge", "tunnel", np.c_[xs, np.tan(np.radians(30.0)) * xs])
+        z = railways.tunnel_floors([a, b], FRAME, lambda xy: np.full(len(xy), 10.0))
+        sa = railways._arc(np.asarray(a[3]))
+        grade_a = np.abs(np.diff(z[0]) / np.diff(sa))
+        self.assertLessEqual(float(grade_a.max()), railways.TUNNEL_STAGGER_GRADE * 1.02,
+                             "the long line takes the dive; the short one is not bent to 17 %")
+        self.assertAlmostEqual(float(z[0][0]), float(z[0][-1]), places=2, msg="portals stay at ground level")
+
     def test_distant_bridge_of_a_nearby_feature_is_not_profiled(self):
         # One feature crosses the tile, but its last 100 m is a bridge 5 km away.
         f = features([[(-100.0, 100.0), (5000.0, 100.0), (5100.0, 100.0)]],
@@ -263,6 +338,21 @@ class RailwayTest(unittest.TestCase):
         self.assertEqual(sorted(k for k, _L in long_parts), ["ground", "ground", "tunnel"])
         self.assertAlmostEqual(max(L for k, L in long_parts if k == "tunnel"), 150.0, delta=1.0,
                                msg="the long tunnel kept as a track of its own")
+
+    def test_two_parallel_tunnels_are_one_wide_bore(self):
+        f1 = features([[(-50.0, 100.0), (300.0, 100.0)]], ["standard_gauge"], subtypes=["rail"], ids=["a"],
+                      flags=[(0, "is_tunnel", 0.25, 0.75)])
+        f2 = features([[(-50.0, 106.0), (300.0, 106.0)]], ["standard_gauge"], subtypes=["rail"], ids=["b"],
+                      flags=[(0, "is_tunnel", 0.25, 0.75)])
+        tubes = []
+        mesh = railways.tile_mesh(FRAME, 0, 0, [f1, f2], lambda xy: np.full(len(xy), 10.0), tube_out=tubes)
+        self.assertIsNotNone(mesh)
+        self.assertTrue(tubes)
+        wide = [c for c in tubes if c["w"] > railways.TUNNEL_BORE_W + 2.0]
+        self.assertEqual(len(wide), 1, "one tube covers both tracks")
+        self.assertGreater(wide[0]["w"], 10.0)
+        self.assertTrue(all(abs(float(np.mean(np.asarray(c["n"])[:, 1])) - 103.0) < 2.0 for c in tubes),
+                        "the shared tube is centred between the two tracks")
 
     def test_a_long_tunnel_is_a_track_in_a_bore(self):
         """A mapped rail tunnel keeps its track: the bed is the lower hull of the hill (inside it, not over it), a

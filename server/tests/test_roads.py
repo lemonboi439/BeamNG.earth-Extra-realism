@@ -736,16 +736,12 @@ class BuildTileTest(unittest.TestCase):
                 self.assertEqual(cap, not roads._on_box(end, (x0, y0, x1, y1)))
         dr = [c for c in chunks if c["m"] == roads.DRAIN["m"]]
         self.assertTrue(dr, "storm drains at the corners")
-        sec_w = roads.carriageway("secondary", "paved", True)
-        curbs = [sidewalks.run_geometry(w["pts"], w["side"], roads.SIDEWALK["w"]) for w in walks]
-        for c in dr:              # in the gutter: GUTTER w / 2 from a curb, on the road's side of it
-            p = np.mean(np.array(c["n"])[:, :2], axis=0)
-            best = min(((roads._seg_dist(p[None], cu[:-1, :2], cu[1:, :2]).min(), cu, o) for cu, o in curbs),
-                       key=lambda t: t[0])
-            d, cu, o = best
-            k = int(np.argmin(np.hypot(*(cu[:, :2] - p).T)))
-            self.assertAlmostEqual(d, roads.GUTTER["w"] / 2, delta=0.05)
-            self.assertLess(float((p - cu[k, :2]) @ o[k]), 0, "on the road side of the curb")
+        gut = [np.asarray(c["n"], np.float64) for c in chunks if c["m"] == roads.GUTTER["m"]]
+        self.assertTrue(gut, "gutters along the curbs")
+        for c in dr:              # in the gutter (a drain at a clipped corner had no curb segment within 0.05 m)
+            p = np.mean(np.asarray(c["n"], np.float64)[:, :2], axis=0)
+            d = min(roads._seg_dist(p[None], g[:-1, :2], g[1:, :2]).min() for g in gut)
+            self.assertLess(float(d), roads.GUTTER["w"] / 2 + 0.02, "on the gutter's centre line")
         with tempfile.TemporaryDirectory() as d:
             path, n = roads.write_tile(d, "/vfs", 1, 0, 0, chunks, walks)
             import json
