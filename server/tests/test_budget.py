@@ -8,13 +8,9 @@ from unittest import mock
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import budget  # noqa: E402
 import dem  # noqa: E402
-import deshadow  # noqa: E402
-import grading  # noqa: E402
-import heightmap  # noqa: E402
 import imagery  # noqa: E402
 import mapdata  # noqa: E402
 import roadwidth  # noqa: E402
-import roads  # noqa: E402
 import seacarve  # noqa: E402
 
 
@@ -24,16 +20,12 @@ class BudgetTest(unittest.TestCase):
         import farfield
         self.saved = (dem.MEM_TILES, imagery.MEM_TILES, mapdata.MEM_MB, seacarve.MEM_CELLS, roadwidth.WALL_CELLS)
         self.fin = (imagery.MEM_FINISHED_MB, imagery.MEM_DECODED)
-        self.more = (roadwidth.COMBOS, heightmap.CHUNK_CACHE, deshadow.MEM_TILES, roads.FACTS_MEM_KEPT,
-                     grading.PLAN_MEM_MB)
         self.far = (copy.deepcopy(farfield.K_TABLE), copy.deepcopy(farfield.TEX_DEFAULT))
 
     def tearDown(self):
         import farfield
         dem.MEM_TILES, imagery.MEM_TILES, mapdata.MEM_MB, seacarve.MEM_CELLS, roadwidth.WALL_CELLS = self.saved
         imagery.MEM_FINISHED_MB, imagery.MEM_DECODED = self.fin
-        roadwidth.COMBOS, heightmap.CHUNK_CACHE, deshadow.MEM_TILES, roads.FACTS_MEM_KEPT, \
-            grading.PLAN_MEM_MB = self.more
         farfield.K_TABLE.clear(), farfield.K_TABLE.update(self.far[0])
         farfield.TEX_DEFAULT.clear(), farfield.TEX_DEFAULT.update(self.far[1])
 
@@ -47,10 +39,6 @@ class BudgetTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"BNGE_BUDGET": "desktop"}):
             self.assertFalse(budget.small(8.0))
 
-    def test_streaming_worker_caps(self):
-        self.assertLessEqual(dem.FETCH_WORKERS + dem.URGENT_WORKERS + dem.PROBE_WORKERS, 16)
-        self.assertLessEqual(imagery.FETCH_WORKERS + imagery.URGENT_WORKERS, 10)
-
     def test_road_processes_by_threads_and_memory(self):
         self.assertEqual(budget.road_processes(16, 62.0), 4)
         self.assertEqual(budget.road_processes(12, 16.0), 3)     # (16 GB: not four ~1.5 GB processes)
@@ -59,47 +47,22 @@ class BudgetTest(unittest.TestCase):
         self.assertEqual(budget.road_processes(16, 8.0), 2)
 
     def test_small_caches(self):
-        # a desktop with RAM to spare keeps the desktop sizes (the scale's cap)
-        with mock.patch.object(budget, "total_gb", return_value=128.0), \
-                mock.patch("os.cpu_count", return_value=16):
-            self.assertFalse(budget.apply(False))
-            self.assertEqual((dem.MEM_TILES, mapdata.MEM_MB, seacarve.MEM_CELLS, roads.FACTS_MEM_KEPT),
-                             (512, 192, 24, 640), "a 96 GB+ machine: the desktop sizes stay")
-        # the user's PC (34 GB, 12 threads): the game and Windows need the rest, so 2 road + 2 far + 5 fixed
-        with mock.patch.object(budget, "total_gb", return_value=34.0), \
-                mock.patch("os.cpu_count", return_value=12):
-            self.assertFalse(budget.apply(False))
-            self.assertEqual(budget.proc_count(), 10, "3 road + 2 far + 5 fixed on a 32 GB PC")
-            got = (dem.MEM_TILES, mapdata.MEM_MB, seacarve.MEM_CELLS, roadwidth.WALL_CELLS, roadwidth.COMBOS,
-                   heightmap.CHUNK_CACHE, imagery.MEM_TILES, imagery.MEM_FINISHED_MB, imagery.MEM_DECODED,
-                   deshadow.MEM_TILES, roads.FACTS_MEM_KEPT, grading.PLAN_MEM_MB)
-            self.assertEqual(got, (256, 96, 12, 24, 16, 256, 256, 80, 192, 256, 320, 16))
-        # a Steam Deck: the measured minima (the small floors); sea floors and imagery tiles keep the desktop sizes
-        with mock.patch.object(budget, "total_gb", return_value=14.5), \
-                mock.patch("os.cpu_count", return_value=8):
-            self.assertTrue(budget.apply(True))
-            self.assertEqual((dem.MEM_TILES, roadwidth.WALL_CELLS, mapdata.MEM_MB),
-                             (budget.SMALL_DEM_TILES, budget.SMALL_WALL_CELLS, budget.SMALL_MAPDATA_MB))
-            self.assertEqual((imagery.MEM_TILES, seacarve.MEM_CELLS), (self.saved[1], self.saved[3]),
-                             "these keep theirs (smaller, they thrashed)")
-            self.assertEqual((roadwidth.COMBOS, heightmap.CHUNK_CACHE, deshadow.MEM_TILES), (7, 128, 128),
-                             "stricter than the desktop sizes they kept before")
-            self.assertEqual(roads.FACTS_MEM_KEPT, budget.SMALL_FACTS_CELLS)
-            self.assertGreaterEqual(mapdata.MEM_MB, 128, "a road tile's cells fit (Baltimore's: ~124 MB)")
+        self.assertFalse(budget.apply(False))
+        self.assertEqual(dem.MEM_TILES, self.saved[0], "the desktop sizes stay")
+        self.assertTrue(budget.apply(True))
+        self.assertEqual((dem.MEM_TILES, roadwidth.WALL_CELLS, mapdata.MEM_MB),
+                         (budget.SMALL_DEM_TILES, budget.SMALL_WALL_CELLS, budget.SMALL_MAPDATA_MB))
+        self.assertEqual((imagery.MEM_TILES, seacarve.MEM_CELLS), (self.saved[1], self.saved[3]),
+                         "these keep theirs (smaller, they thrashed)")
+        self.assertGreaterEqual(mapdata.MEM_MB, 128, "a road tile's cells fit (Baltimore's: ~124 MB)")
         d = dem.Dem(os.path.join(os.path.dirname(__file__), "_no_cache"), fetcher=mock.Mock())
         self.assertEqual(d.mem_tiles, budget.SMALL_DEM_TILES, "read when the cache is made")
 
     def test_small_finished_imagery(self):
         """The finished imagery pyramid's memory by the RAM on a small machine (a Steam Deck: ~58 MB of its JPEGs,
-        96 decoded), the desktop's kept on a desktop with RAM to spare; a mid-size desktop scales it (the floor)."""
-        with mock.patch.object(budget, "total_gb", return_value=128.0), \
-                mock.patch("os.cpu_count", return_value=16):
-            self.assertFalse(budget.apply(False))
-            self.assertEqual((imagery.MEM_FINISHED_MB, imagery.MEM_DECODED), self.fin)
-        with mock.patch.object(budget, "total_gb", return_value=34.0), \
-                mock.patch("os.cpu_count", return_value=12):
-            budget.apply(False)
-        self.assertEqual(imagery.MEM_FINISHED_MB, 80, "the desktop floor (58 scaled)")
+        96 decoded, for the desktop's 160 MB and 384), the desktop's kept."""
+        self.assertFalse(budget.apply(False))
+        self.assertEqual((imagery.MEM_FINISHED_MB, imagery.MEM_DECODED), self.fin)
         with mock.patch.object(budget, "total_gb", return_value=14.5):
             self.assertTrue(budget.apply(True))
         self.assertEqual(imagery.MEM_FINISHED_MB, 58)

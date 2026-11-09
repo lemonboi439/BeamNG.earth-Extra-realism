@@ -130,8 +130,8 @@ class ChunkCache:
     with the last; computing all of them every move took 2-10 s, more than the 2.2 s between moves at
     58 m/s, 2026-10-12). Exact: the heights and coordinates are elementwise (surface_u). LRU, thread-safe."""
 
-    def __init__(self, cap=None):
-        self.cap = CHUNK_CACHE if cap is None else cap      # (budget.apply may have scaled it after the import)
+    def __init__(self, cap=CHUNK_CACHE):
+        self.cap = cap
         self.chunks = OrderedDict()             # (kx, ky) lattice chunk -> (CHUNK, CHUNK) float64 [j, i]
         self.geo = OrderedDict()                # (kx, ky) lattice chunk -> ((CHUNK, CHUNK) lat, (CHUNK, CHUNK) lon)
         self.lock = threading.Lock()
@@ -222,26 +222,22 @@ def grid_u_chunked(frame, elev_fn, cx, cy, size, cache, keep=None):
         return u, 0.0
 
     if len(missing) == nc * nc:
-        # Build one cache chunk at a time. The previous full-block path held two float64 coordinate grids,
-        # elevations, and the final height grid simultaneously, which made cold 1024² loads spike while
-        # several heightmap workers overlapped.
         xs, ys = sample_coords(cx, cy, size)
-        if keep is not None:
-            full_lat = np.empty((size, size))
-            full_lon = np.empty((size, size))
+        full_lat = np.empty((size, size))
+        full_lon = np.empty((size, size))
+        for r0 in range(0, size, CHUNK_ROWS):
+            r = slice(r0, r0 + CHUNK_ROWS)
+            full_lat[r], full_lon[r], _ = frame.enu_to_geodetic(xs, ys[r, None], 0.0)
+        elev = np.asarray(elev_fn(full_lat, full_lon), np.float64)
+        for r0 in range(0, size, CHUNK_ROWS):
+            r = slice(r0, r0 + CHUNK_ROWS)
+            u[r] = frame.geodetic_to_enu(full_lat[r], full_lon[r], elev[r])[2]
         for cj in range(nc):
             for ci in range(nc):
                 k = ((kx0 // CHUNK) + ci, (ky0 // CHUNK) + cj)
                 sl_y = slice(cj * CHUNK, (cj + 1) * CHUNK)
                 sl_x = slice(ci * CHUNK, (ci + 1) * CHUNK)
-                e, n = np.meshgrid(xs[sl_x], ys[sl_y])
-                la, lo, _ = frame.enu_to_geodetic(e, n, 0.0)
-                elev = np.asarray(elev_fn(la, lo), np.float64)
-                chunk = frame.geodetic_to_enu(la, lo, elev)[2]
-                u[sl_y, sl_x] = chunk
-                cache.put(k, chunk.copy(), geo=(la.copy(), lo.copy()))
-                if keep is not None:
-                    full_lat[sl_y, sl_x], full_lon[sl_y, sl_x] = la, lo
+                cache.put(k, u[sl_y, sl_x].copy(), geo=(full_lat[sl_y, sl_x].copy(), full_lon[sl_y, sl_x].copy()))
         if keep is not None:
             keep["lat"], keep["lon"] = full_lat, full_lon
         return u, 1.0

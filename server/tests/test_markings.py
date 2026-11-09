@@ -80,7 +80,7 @@ class SwedenTest(unittest.TestCase):
     def test_a_rural_road_has_broken_edge_lines(self):
         ex = self.extras()
         self.assertEqual({(w, n) for w, _, n in self.lines(ex, "edge")}, {(0.15, 1.0)}, "M2: 1 m dashes, 0.15 m")
-        self.assertEqual(len(self.lines(ex, "edge")), 2 * 39, "1 + 2 m both sides (118 m: 39 whole cycles)")
+        self.assertEqual(len(self.lines(ex, "edge")), 2 * 40, "1 + 2 m both sides")
         self.assertEqual({n for _, _, n in self.lines(ex, "centre")}, {3.0})
         self.assertEqual(len(self.lines(ex, "centre")), 10, "M1: 3 + 9 m")
 

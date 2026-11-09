@@ -21,6 +21,7 @@ import os
 import shutil
 import threading
 import time
+import zipfile
 
 import numpy as np
 
@@ -65,7 +66,10 @@ def start_run(cache_dir):
 # The plans' output format: their key in the revisit cache (kept across updates) and in baked packs (bakepack.py), in
 # place of the code hash. Bump it whenever a change makes other plans (grading, its inputs' rules), or players keep the
 # old ones; tests/test_bake_formats.py fails until it is bumped (its fixture's digest is stored with the number).
-PLANS_FORMAT = 13     # 13: centimetre-scale dirt wear and bounded edge displacement from random banking
+PLANS_FORMAT = 30     # 30: FACTS_FORMAT 13 (skew crossings' grade-separation bridges long enough for the road under them, GitHub #1020); 29: FACTS_FORMAT 12 (a long road's copies far from its home agree on its bridges over underpasses, GitHub #1020); 28: a rail bed beside a road that crosses under it (a bridge, SEAM_CROSS_M of height at a
+                      # crossing angle) keeps its own level: the approach fill is not taken down to the road under
+                      # the deck and the two sides meet the deck; 27: FACTS_FORMAT 11 (an underpass in a cutting bridged by the roads over it, GitHub #1009); PR #1014's one-way carriageways drawn and graded where OpenStreetMap's placement puts their lanes (PR #1014); 26: CA-1's Tom Lantos tunnels: a bridge starts at a tunnel's portal over a short ground gap (roads._portal_decks, FACTS_FORMAT 10), no portal low arch shorter than SECTION_MIN_M before a full tube (roads.portal_cover), and a tunnel's own sections (a low arch at its portal, the full tube) and a part going on from another's end never twin tunnels (roads.twin_tunnels: grading._twin_trimmed cut them, CA-1's Tom Lantos bore lost its tube); 25: underpasses: no open-road trench through the roads over them, a tunnel's portal kept where its own approach road joins it (roads._tunnel_reach) and a road's bridge over one found in any cell it crosses (roads._gradesep_elsewhere; FACTS_FORMAT 9); 24: a segment's tunnel ranges joined only where one source way spans the gap (PR #927); a rail bed's band past its ballast gives way to an approach's carriageway, no claim past an abutment end (PR #920, #909); bridge pieces keep their mapped local levels across merged interchange roads (PR #873, #866); 23: bridge seams without steps: a deck end meets its road, a street off an abutment held level, a single span shared between its approaches, a stream crossed at the road's level, a track beside a road with room for the ground between (grading._pin_cw_ends, _hold_mouth, _grade_match, railroadseam.py, roads.water_clear); 22: overpasses mapped in parts are one span and road ends within 2 m one dip node (#973, #983; still the same release as 21); 21: one bump for the 2026-11-08 PR batch: abandoned railways not graded (#953, #706), dirt roads on the coarse global elevation smoothed over DIRT_SIGMA_COARSE_M (#951, #835), rail viaduct decks' heights capped (#949), worn railway lines cut at motorways (#946, #918); 18: cutting probes located through grading.enu_to_ll_dense (heights moved < 0.1 mm); 17: PR #843 (restored highway and ramp shoulder widths); 16: walkway bridge spans cap the road under them (PR #842) and OSM busways graded (PR #836); 15: continuous subsea tunnel profiles and their approaches (PR #822, #792); 14: past an abutment end the ground falls away under a still-climbing deck (ABUT_UNDER_GRADE)
+                      # 13: centimetre-scale dirt wear and bounded edge displacement from random banking
                       # 12: dirt roads toned down (#783, #784; dev); PR #811's own 12: bounded, local dirt damage, independent of real
                       #     grades and DEM extensions
                       # 11: pass roads with two lanes graded as mountain roads again (the Stelvio); 10: worn dirt roads (PR #677: damage, lean, 2 m vertices, 2.5 m smoothing of minor dirt); 9: roundabout rings level across (RING_LEVEL_ON); 8: PR #753 (a deck end's approaches rise with it, slip roads tied to their overpass road); 7: PR #471 and #686 lanes (wider / narrower roads graded); 6: the dip under a deck takes its ends on their embankments (#684's fill); 5: one half width a bridge (each was appended twice: under-deck ground and carriageways read the wrong bridge's); 4: junction pads, steep side-road ramps, rail bridges the DEM predates (PR #482/#671); 3:
@@ -76,7 +80,10 @@ def plans_format():
     """The plans' revisit key format: PLANS_FORMAT and the road facts' (roads.FACTS_FORMAT: the plans are made from
     them), "<plans>.<facts>"."""
     import roads
-    return f"{PLANS_FORMAT}.{roads.FACTS_FORMAT}"
+    import grading
+    # (the grade guard, off by default, makes other plans: its own key, so that the two never mix and nobody else's
+    # plans are thrown away)
+    return f"{PLANS_FORMAT}.{roads.FACTS_FORMAT}" + (".gg1" if grading.GUARD_ON else "")
 
 
 FRAMES = "r10"          # the plans' frames: their planning regions' (geotiles.PLAN_Z), not an anchor's
@@ -134,7 +141,7 @@ class PlanCache:
                 lists = {g: _split(f, g) for g in ("p", "z", "c", "k", "v", "o")}
                 lists["b"] = _split(f, "b") if "b_n" in f.files else []
                 lists["w"] = _split(f, "w") if "w_n" in f.files else []
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, EOFError, zipfile.BadZipFile):   # (damaged: planned again)
             return None
         plans, cuts, banks, widens = [], iter(lists["c"]), iter(lists["b"]), iter(lists["w"])
         for m, xy, z in zip(meta["plans"], lists["p"], lists["z"]):
@@ -330,7 +337,7 @@ class PlanCache:
             with np.load(self._region_path(tag, home), allow_pickle=False) as f:
                 meta = json.loads(bytes(f["meta"]).decode("utf-8"))
                 lines, cx, cz = _split(f, "l"), _split(f, "x"), _split(f, "q")
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, EOFError, zipfile.BadZipFile):   # (damaged: planned again)
             return None
         parts, prof = [], {}
         for m, ln in zip(meta["parts"], lines):

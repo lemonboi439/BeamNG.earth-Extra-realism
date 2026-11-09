@@ -24,8 +24,8 @@ import fast     # Rust kernels (earthfast)
 
 RADIUS = 5.0                    # m, curb return radius when the class is not listed in RADII
 # by the larger road's class (street-view study of Fells Point, 2026-10-11: city corners are tight)
-RADII = {"residential": 4.5, "living_street": 3.5, "unclassified": 4.5, "service": 3.5,
-         "tertiary": 6.0, "secondary": 7.5, "primary": 8.5, "trunk": 10.0}
+RADII = {"residential": 3.0, "living_street": 3.0, "unclassified": 3.0, "service": 3.0,
+         "tertiary": 4.5, "secondary": 6.0, "primary": 6.0, "trunk": 8.0}
 STOP_LINE = {"m": "line_white", "tl": 6.4, "p": 2, "w": 0.45}   # 1 m before the crosswalk
 STOP_GAP = 1.0
 BULB_M = 6.0                    # m a curb extension runs along the street past the corner
@@ -97,7 +97,7 @@ def _piece(P, u1, w1, u2, w2, r):
     a0 = math.atan2(*(T1 - Z)[::-1])
     a1 = math.atan2(*(T2 - Z)[::-1])
     da = (a1 - a0 + math.pi) % (2 * math.pi) - math.pi
-    k = max(8, int(abs(da) * r / 0.35) + 1)
+    k = max(3, int(abs(da) * r / 0.75) + 1)
     ang = a0 + da * np.linspace(0.0, 1.0, k)
     arc = np.c_[Z[0] + r * np.cos(ang), Z[1] + r * np.sin(ang)]
     return arc, float((T1 - P) @ u1), float((T2 - P) @ u2), _line_x(P + n1 * w1, u1, P - n2 * w2, u2)
@@ -272,7 +272,7 @@ def _across(roads, bi, bj, cr, X, walk_w, debug=None):
     for C, arc in ((C1, a1), (C2, a2)):
         if C is not None and len(arc) > 1:
             fills.append(np.vstack([np.r_[C, zo]] + [np.r_[q, zo] for q in arc]))
-    return {"arc": curb, "inward": nrm, "outer": outer, "fill": None, "fills": fills, "ramps": [], "w": max(wki, wkj)}, ti, tj
+    return {"arc": curb, "inward": nrm, "outer": outer, "fill": None, "fills": fills, "ramps": []}, ti, tj
 
 
 def _near_node_pairs(pos, radius):
@@ -499,7 +499,7 @@ def find(roads, has_walk, walk_w, parking_m=0.0, has_parking=lambda spec: False,
                 a0 = math.atan2(*(Ti - Z)[::-1])
                 a1 = math.atan2(*(Tj - Z)[::-1])
                 da = (a1 - a0 + math.pi) % (2 * math.pi) - math.pi      # the short way round
-                k = max(8, int(abs(da) * radius / 0.35) + 1)
+                k = max(3, int(abs(da) * radius / 0.75) + 1)
                 ang = a0 + da * np.linspace(0.0, 1.0, k)
                 arc2 = np.c_[Z[0] + radius * np.cos(ang), Z[1] + radius * np.sin(ang)]
                 pre = ([Pi + ui * ci + ni * wi, Pi + ui * (ti + bi) + ni * di] if pi_ else [])
@@ -543,7 +543,7 @@ def find(roads, has_walk, walk_w, parking_m=0.0, has_parking=lambda spec: False,
                     if debug is not None:
                         debug.append(('on carriageway', hit[:8], hit in internal, roads[ri][0][:8], roads[rj][0][:8], round(theta), X.round(1).tolist()))
                     continue
-                corner = {"arc": curb, "inward": nrm, "outer": outer, "fill": fill, "ramps": [], "w": max(wki, wkj)}
+                corner = {"arc": curb, "inward": nrm, "outer": outer, "fill": fill, "ramps": []}
                 if pavement:
                     corner["road_sides"] = ((roads[ri][0], li), (roads[rj][0], -lj))
                     corner["edge_cuts"] = ((Pi.copy(), ui, ci), (Pj.copy(), uj, cj))

@@ -159,12 +159,10 @@ def _neighbours(md, key, keys=None):
 
 
 def _kind_half(feats, i):
-    """(kind, half width m) of feature i as a crossing line: 0 a drawn road, 1 a drawn railway; None neither (a
-    subway: a deep bore, no surface crossing to infer a bridge or underpass from)."""
+    """(kind, half width m) of feature i as a crossing line: 0 a drawn road, 1 a drawn railway; None neither."""
     sub = str(feats.attrs["subtype"][i]) if "subtype" in feats.attrs else "road"
     if sub == "rail":
-        got = railways.drawn(feats, i)
-        return (1, RAIL_HALF_M) if got is not None and got[0] != "subway" else None
+        return (1, RAIL_HALF_M) if railways.drawn(feats, i) is not None else None
     if sub != "road":
         return None
     cls = str(feats.attrs["class"][i]) if "class" in feats.attrs else "unknown"
