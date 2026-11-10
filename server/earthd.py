@@ -115,8 +115,6 @@ import roadmesh as roadmeshmod  # noqa: E402
 import roadwidth as roadwidthmod  # noqa: E402
 import revisit as revisitmod  # noqa: E402
 import signstream  # noqa: E402
-import roadsigns as roadsignsmod  # noqa: E402
-import designs as designsmod  # noqa: E402
 import dirsigns as dirsignsmod  # noqa: E402
 import mapdata as mapdatamod  # noqa: E402
 import dem as demmod  # noqa: E402
@@ -274,9 +272,6 @@ ROUTE_AHEAD_MAX_M = 20000.0      # --route-prefetch-km * 1000 (15-25 km is sane;
 # the GPS's "Download along route" setting (the user, 2026-10-29: "options on pre downloading/generating along a gps
 # route"): the route message's "download": off, ahead (ROUTE_AHEAD_MAX_M) or the whole route (at most this far)
 ROUTE_DOWNLOAD_MODES = ("off", "ahead", "route")
-ROUTE_429_TRIES = 3              # a route answered 429 (routing.openstreetmap.de's fair use) is asked again while it is
-ROUTE_429_WAIT_S = 3.0           # the latest destination, after the host's Retry-After or this x the try ...
-ROUTE_429_MAX_WAIT_S = 20.0      # ... at most this
 ROUTE_WHOLE_MAX_M = 500000.0
 ROUTE_IMG_TRIES = 5               # a route download's ground-photo tile the limiter deferred: asked this often
 ROUTE_RETRY_S = 2.0               # a deferred tile/cell backs off this long before the next one in the corridor
@@ -1143,7 +1138,6 @@ class Server:
         self.base_lock = threading.Lock()
         self.pads_rebuild = set()       # blocks built without gas station pads that lie on them (pads_stale)
         self.roads_rebuild = set()      # blocks built before every road cell under them was on disk (roads_refresh)
-        self.roads_need = {}            # ... and what each waits for: "roads" (its roads painted) or "landcover"
         self.pads_changed_at = 0.0      # (time.monotonic) the last new pad: Connection.pads_refresh waits a little
         self.fast = False               # the player faster than FAST_BASE_V (the latest pose): photos follow blocks
         self.base_pending = {}          # block -> the analysis regions its base photo was rendered without
@@ -1195,12 +1189,7 @@ class Server:
             self.osm_fuel = ThreadPoolExecutor(OSM_FUEL_THREADS, thread_name_prefix="osm-fuel")
             self.osm_fuel_done, self.osm_fuel_wait = set(), {}
             self.osm_fuel.submit(self._osm_fuel_warm)
-        self.rsigns_on = True       # the settings page's Road signs (roadsigns.enabled, with BNE_ROADSIGNS=on)
-        self.dej_on = False         # the settings page's German junction signs (designs.enabled; BNE_DEJUNCTIONS forces it;
-                                    # off by default until its in-game performance check)
         self.dirs_on = False        # the settings page's Direction signs (dirsigns.enabled; BNE_DIRSIGNS=on forces it)
-        self.towns_on = False       # the settings page's Town signs (townentry.enabled; BNE_TOWNSIGNS=on / off forces it;
-                                    # opt-in as before until an in-game performance check)
         if self.gas_stations and surface is not None and hasattr(surface, "gas_pads"):
             surface.gas_pads = True     # their forecourts painted asphalt (surface.Surface.fuel_pads)
         self.traffic = bool(traffic) and mapdata is not None   # the AI road graph around the player (navgraph.py)
@@ -1947,7 +1936,6 @@ class Server:
             t0 = time.perf_counter()
             cla, clo, _ = anchor.frame.enu_to_geodetic(x, y, 0.0)
             rules = navgraphmod.road_rules(navgraphmod.country_near(self.airports_db, float(cla), float(clo)))
-            rules["de_junctions"] = designsmod.enabled(self.dej_on)
             path, n_nodes, n_edges = self.road_pool.submit(
                 blockworker.navgraph, aid, anchor.lat, anchor.lon, anchor.zooms[0], x, y, self.out_dir,
                 self.vfs_dir, serial, self.left_hand(anchor), self.mph(anchor), rules).result()
@@ -1983,12 +1971,7 @@ class Server:
                                                   anchor.bridges.depth_of(fid)))
         except Exception as e:          # no decks: the graph follows the ground under bridges
             log.debug("navgraph decks: %s: %s", type(e).__name__, e)
-        # (Germany's mapped nodes too: its junction signs on, the graph's window in Germany)
-        de_nodes = designsmod.reads_here(designsmod.enabled(self.dej_on), anchor.frame, (x - w, y - w, x + w, y + w))
-        nodes = secrossings.read(self.mapdata, anchor.frame, keys) \
-            if secrossings.wanted(self.country(anchor), de_nodes) else None
-        # (and the cells' road_routes for the German junctions' ref ranks, as blockworker.navgraph reads them)
-        de_routes = blockworker._de_routes(self.mapdata, keys) if de_nodes else ()
+        nodes = secrossings.read(self.mapdata, anchor.frame, keys) if str(self.country(anchor) or "").upper() == "SE" else None
         tun = {}
         try:            # (the tunnels the road tiles build: the AI drives through them; off: navgraph.AI_TUNNELS)
             if not navgraphmod.AI_TUNNELS:
@@ -2005,11 +1988,9 @@ class Server:
                                   widths=self.road_widths,
                                   left_hand=self.left_hand(anchor), mph=self.mph(anchor),
                                   signals=furnituremod.signals_for(self.mapdata, anchor.frame, keys),
-                                  country=self.country(anchor), priority=None if nodes is None else nodes["priority"],
-                                  de_on=designsmod.enabled(self.dej_on), de_routes=de_routes)
+                                  country=self.country(anchor), priority=None if nodes is None else nodes["priority"])
         cla, clo, _ = anchor.frame.enu_to_geodetic(x, y, 0.0)
         graph["rules"] = navgraphmod.road_rules(navgraphmod.country_near(self.airports_db, float(cla), float(clo)))
-        graph["rules"]["de_junctions"] = designsmod.enabled(self.dej_on)
         for old in glob.glob(os.path.join(self.out_dir, f"navgraph_{aid}_*.json")):    # one file at a time
             try:
                 os.remove(old)
@@ -2138,8 +2119,7 @@ class Server:
         if self.sign_pool is not None:
             return poolsmod.result_running(self.sign_pool.submit(
                 blockworker.signs_tile, aid, anchor.lat, anchor.lon, anchor.zooms[0], tx, ty, self.out_dir,
-                self.vfs_dir, self.left_hand(anchor), self.mph(anchor), self.country(anchor), dirsignsmod.enabled(self),
-                roadsignsmod.enabled(self), designsmod.enabled(self.dej_on), Server.towns_enabled(self)),
+                self.vfs_dir, self.left_hand(anchor), self.mph(anchor), self.country(anchor), dirsignsmod.enabled(self)),
                 ROAD_TILE_TIMEOUT_S)
         g = self.grader_for(anchor)
         zoom = anchor.zooms[0]
@@ -2148,16 +2128,9 @@ class Server:
             z = self.ground(anchor.frame, la, lo, self.dem.sample(la, lo, zoom))
             return g.apply(la, lo, z, gradingmod.ROAD_LIFT) if g is not None else z
         urban = self.surface.urban if self.surface is not None and hasattr(self.surface, "urban") else None
-        towns = None
-        if Server.towns_enabled(self) and self.mapdata is not None and self.surface is not None:
-            if getattr(self, "towns", None) is None:
-                self.towns = townentrymod.Towns(self.mapdata, self.surface)
-            towns = self.towns.town_state(anchor.frame, roadsmod.cells_of_tile(anchor.frame, tx, ty,
-                                                                               blockworker.TOWNS_MARGIN_M))
         return signstream.build_tile(self.mapdata, anchor.frame, aid, tx, ty, elev, self.out_dir, self.vfs_dir,
                                      urban, self.road_widths, self.left_hand(anchor), self.mph(anchor),
-                                     self.country(anchor), dirsignsmod.enabled(self), roadsignsmod.enabled(self),
-                                     designsmod.enabled(self.dej_on), towns)
+                                     self.country(anchor), dirsignsmod.enabled(self))
 
     def build_sky_tile(self, aid, ux, uy):
         """buildings.skyline_tile: a skyline (render-only) tile of anchor aid, or None (its cells not at hand: asked
@@ -2320,8 +2293,7 @@ class Server:
             blockworker.roads_geo, aid, anchor.lat, anchor.lon, anchor.zooms[0], gx, gy, gzoom, self.out_dir,
             self.vfs_dir, self.sidewalks, DETAIL_ROAD_LIFT if self.near_visual == "detail" else 0.0,
             self.buildings, lh, mph, self.anchor_q(anchor) if skin else None, self.gas_stations, buried, lamps,
-            country, content, skin, exact, Server.pole_profile(self), designsmod.enabled(self.dej_on),
-            Server.towns_enabled(self))
+            country, content, skin, exact, Server.pole_profile(self))
         t0, waited = time.perf_counter(), []
         try:
             res = poolsmod.result_running(fut, ROAD_TILE_TIMEOUT_S, waited)
@@ -2351,21 +2323,17 @@ class Server:
 
     def geo_content_key(self, gx, gy):
         """The revisit key geotile (gx, gy)'s road content has with this server's settings (blockworker._geo_content_key,
-        its own place's rules), or None (no map data). Near Germany with its junction signs on the key names the border
-        data in use (designs.cache_parts): the first such key fetches it here once (regionaldata, then on disk)."""
+        its own place's rules), or None (no map data)."""
         if self.mapdata is None:
             return None
         import geotiles
         lh, mph, buried, lamps, country, gzoom = self.geo_rules(gx, gy)
         return blockworker._geo_content_key(geotiles.geobox(gx, gy).key, gzoom, self.buildings, lh, mph,
                                             self.gas_stations, buried, lamps, country, md=self.mapdata.versions(),
-                                            models_dir=self.root, pole_profile=Server.pole_profile(self),
-                                            de_junctions=designsmod.enabled(self.dej_on),
-                                            towns_on=Server.towns_enabled(self))
+                                            models_dir=self.root, pole_profile=Server.pole_profile(self))
 
     def geo_prebuilt(self, gx, gy):
-        """Is geotile (gx, gy)'s road content in the revisit cache (no worker; no network but Germany's border data
-        once, geo_content_key)? -> its key or None."""
+        """Is geotile (gx, gy)'s road content in the revisit cache (no worker, no network)? -> its key or None."""
         k = self.geo_content_key(gx, gy)
         return k if k is not None and os.path.exists(revisitmod._path(self.cache_dir, "roadsg", k)) else None
 
@@ -2411,8 +2379,7 @@ class Server:
         return poolsmod.result_running(submit(
             blockworker.prebuild_geo, gx, gy, gzoom, scratch, self.buildings, lh, mph, self.gas_stations, buried,
             lamps, country, "/temp/beamngEarth/areas_scratch", pole_profile=Server.pole_profile(self),
-            wait_gaps=fast is not None, de_junctions=designsmod.enabled(self.dej_on),
-            towns_on=Server.towns_enabled(self)), timeout)
+            wait_gaps=fast is not None), timeout)
 
     def build_roads_tile(self, aid, tx, ty):
         """roads.py: one road tile of anchor aid, written to the session folder. Returns (vfs path,
@@ -2427,8 +2394,7 @@ class Server:
                 blockworker.roads_tile, aid, anchor.lat, anchor.lon, anchor.zooms[0], tx, ty, self.out_dir,
                 self.vfs_dir, self.sidewalks, DETAIL_ROAD_LIFT if self.near_visual == "detail" else 0.0,
                 self.buildings, self.left_hand(anchor), self.mph(anchor), self.anchor_q(anchor),
-                self.gas_stations, self.buried(anchor), self.lamp_region(anchor), self.country(anchor), Server.pole_profile(self, anchor),
-                designsmod.enabled(self.dej_on), Server.towns_enabled(self))
+                self.gas_stations, self.buried(anchor), self.lamp_region(anchor), self.country(anchor), Server.pole_profile(self, anchor))
             try:
                 # bounded: a worker that never answered held this thread and its roads.Tracker slot for good (4
                 # slots: four hung tiles and no road tile ever again, the loading line at "roads & buildings 0/26")
@@ -2498,10 +2464,6 @@ class Server:
         rwalls = []
         ctx = []
         box = roadsmod.tile_bbox(tx, ty)
-        de_routes = ()      # (the German junction signs' ref ranks near Germany: blockworker._tile_parts' cells, gate)
-        if designsmod.enabled(self.dej_on) and designsmod.near(anchor.frame, box):
-            reach = 200 if poleprofiles.kit_enabled(Server.pole_profile(self, anchor)) else roadsmod.OVERLAP
-            de_routes = blockworker._de_routes(self.mapdata, roadsmod.cells_of_tile(anchor.frame, tx, ty, reach))
         if props is not None:                       # (the props' side sources, read while the tile is built)
             self.mapdata.side_prefetch(roadsmod.cells_of_tile(anchor.frame, tx, ty))
         cell_fn = lambda key: self.mapdata.cell(key, layers=("roads",), kind="demand").layers.get("roads")  # noqa: E731
@@ -2513,10 +2475,8 @@ class Server:
         marks = []                  # stall lines along parking aisles (parking.finish_markings adds the lot polygons')
         near_roads = []             # the ground carriageways near the tile (the median barriers': medians.tile_rows)
         nkeys = roadsmod.cells_of_tile(anchor.frame, tx, ty, blockworker.SIGNALS_MARGIN_M)
-        # (Germany's mapped nodes too: its junction signs on, the junctions it decides reach into Germany)
-        de_nodes = designsmod.reads_here(designsmod.enabled(self.dej_on), anchor.frame, designsmod.tile_reach(box))
-        sign_nodes = secrossings.read(self.mapdata, anchor.frame, nkeys) \
-            if secrossings.wanted(self.country(anchor), de_nodes) else None
+        sign_nodes = secrossings.read(self.mapdata, anchor.frame, nkeys) if str(self.country(anchor) or "").upper() == "SE" \
+            else None
         clearance = [] if self.buildings else None     # (build_tile's RoadClearance, PR #629: the powerlines' too)
         roadside_jobs = []
         drives = []
@@ -2525,10 +2485,9 @@ class Server:
         if self.buildings and euguardrails.enabled():
             import signplacement
             sign_obstacles=signplacement.for_tile(anchor.frame,tx,ty,self.mapdata,items,skip)
-        town_faces = {}                 # the town signs' faces the tile's props use (townentry.enabled)
+        town_faces = {}                 # the town signs' faces the tile's props use (BNE_TOWNSIGNS)
         towns = None
-        if (props is not None and Server.towns_enabled(self) and self.mapdata is not None
-                and self.surface is not None):
+        if props is not None and townentrymod.ON and self.mapdata is not None and self.surface is not None:
             if getattr(self, "towns", None) is None:
                 self.towns = townentrymod.Towns(self.mapdata, self.surface)
             towns = self.towns.maker(anchor.frame, roadsmod.cells_of_tile(anchor.frame, tx, ty,
@@ -2547,8 +2506,7 @@ class Server:
                                      terrain_paint=self.surface is not None, cover_out=cover, marks=marks,
                                      roads_out=near_roads, roadside_jobs=roadside_jobs, signals=furnituremod.signals_for(self.mapdata, anchor.frame, nkeys),
                                      nodes=sign_nodes, clearance_out=clearance,
-                                     development=developmentmod.for_tile(self.mapdata, anchor.frame, tx, ty), towns=towns,
-                                     de_on=designsmod.enabled(self.dej_on), de_routes=de_routes)
+                                     development=developmentmod.for_tile(self.mapdata, anchor.frame, tx, ty), towns=towns)
         # (railway and tram tracks on the ground)
         chunks += railsmod.tile_chunks(anchor.frame, tx, ty, cells, self.country(anchor), urban)
         if self.airports is not None:   # runway markings, drawn by the road mesh like the lane lines
@@ -2638,11 +2596,6 @@ class Server:
         dmesh = roadmeshmod.deck(chunks, (x0, y0, 0.0), _piers, ctx, _beams,
                                  ground=cover, parapets=parapets,
                                  low_parapet_decks=low_parapet_decks, pads=pads)
-        import fences
-        try:                        # the mapped stone walls (GitHub #938), in the retaining walls' stone
-            rwalls = rwalls + fences.stone_walls(anchor.frame, infra_fn, box, elev, roads=near_roads)
-        except Exception as ex:
-            log.warning("stone walls: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
         tmesh = roadmeshmod.tunnel(chunks, (x0, y0, 0.0), rwalls)
         import railways
         rtube = []
@@ -2665,8 +2618,7 @@ class Server:
             _baked_entries, _baked_radii = [], []
             if _custom and self.out_dir and self.vfs_dir:
                 _baked_entries, _baked_radii, _boxes = buildingsmod.custom_models(
-                    anchor.frame, _custom, elev, self.out_dir, self.vfs_dir, road_ends=_bridge_ends,
-                    items=items, origin=(x0, y0))
+                    anchor.frame, _custom, elev, self.out_dir, self.vfs_dir, road_ends=_bridge_ends)
                 custom_entries = _baked_entries
             bld, _ = buildingsmod.road_tile(anchor.frame, tx, ty, self.mapdata, elev, None, None,
                                             items, entries=_baked_entries, radii=_baked_radii)
@@ -2679,8 +2631,7 @@ class Server:
             import fences
             try:
                 props.extend(fences.rows(anchor.frame, infra_fn, box, elev, decks=[
-                    {"n": np.column_stack((xy, z)), "w": spec.width} for _f, spec, xy, z, _l in deck_parts] + rail_decks,
-                    roads=near_roads))
+                    {"n": np.column_stack((xy, z)), "w": spec.width} for _f, spec, xy, z, _l in deck_parts] + rail_decks))
             except Exception as ex:
                 log.warning("fences: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
             import picnic
@@ -2695,8 +2646,7 @@ class Server:
                 log.warning("picnic: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
             import shelters
             try:
-                props.extend(shelters.rows(anchor.frame, infra_fn, box, elev, near_roads, lambda k: self.mapdata.cell(
-                    k, layers=("roads",), kind="demand").layers.get("roads")))
+                props.extend(shelters.rows(anchor.frame, infra_fn, box, elev, near_roads))
             except Exception as ex:
                 log.warning("shelters: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
             import streetprops
@@ -2730,45 +2680,11 @@ class Server:
                                    barrier_mesh=barrier_mesh, barrier_chunks=barrier_chunks,
                                    turbines=turbine_rows, towns=town_faces)
 
-    def set_dej(self, on):
-        """The settings page's German junction signs switch (message german_junctions): True when it changed (the road
-        tiles and the sign tiles are then sent again, as the gas stations' and the direction signs' are)."""
-        on = bool(on)
-        changed = on != self.dej_on
-        self.dej_on = on
-        if changed:
-            log.info("German junction signs %s (settings)", "on" if on else "off")
-        return changed
-
-    def towns_enabled(self):
-        """Whether the town signs are built (townentry.enabled: the settings page's Town signs, BNE_TOWNSIGNS), and
-        with them the speed-limit signs without Germany's general limits: only with the buildings, the road tiles'
-        props that carry the signs (Codex on PR #892: with --buildings off neither the Ortstafel nor the 50 stood).
-        Called as Server.towns_enabled(self), as pole_profile (the tests' servers are namespaces)."""
-        return townentrymod.enabled(self.towns_on) and bool(self.buildings)
-
-    def set_towns(self, on):
-        """The settings page's Town signs switch (message town_signs): True when it changed (the road tiles and the
-        sign tiles are then sent again, as the gas stations' and the direction signs' are)."""
-        on = bool(on)
-        changed = on != self.towns_on
-        self.towns_on = on
-        if changed:
-            log.info("town signs %s (settings)", "on" if on else "off")
-        return changed
-
     def set_dirs(self, on):
         """The settings page's Direction signs switch (message direction_signs): True when it changed."""
         on = bool(on)
         changed = on != self.dirs_on
         self.dirs_on = on
-        return changed
-
-    def set_rsigns(self, on):
-        """The settings page's Road signs switch (message road_signs): True when it changed."""
-        on = bool(on)
-        changed = on != self.rsigns_on
-        self.rsigns_on = on
         return changed
 
     def set_gas_stations(self, on):
@@ -2829,8 +2745,6 @@ class Server:
             "buildings": bool(self.buildings),
             "gas_stations": bool(self.gas_stations),
             "pole_profile": Server.pole_profile(self),
-            "de_junctions": designsmod.enabled(self.dej_on),
-            "towns_on": Server.towns_enabled(self),
             # every kind: the map data's versions (Overture release, layer versions, the weekly rail / lane builds)
             "md": md,
             # far tiles' geometry and texture (blockworker._far_key, far_tile): the layout (quality: cells, texture px)
@@ -3356,8 +3270,7 @@ class Server:
             # ground models per 2 m sample from the cached land cover and the slope (surface.py);
             # rows flipped as the heightmap's (row 0 = north)
             t1 = time.perf_counter()
-            classes, complete = self.surface.block_classes(anchor.frame, cx, cy, keep["lat"], keep["lon"])
-            stages["classes"] = time.perf_counter() - t1
+            classes, complete = self.surface.classes(keep["lat"], keep["lon"])
             idx = surfacemod.classify(classes, keep["u"], heightmap.SQUARE, keep["lat"], keep["lon"])
             if self.sea is not None and not provisional:    # under water: the bed (no grass through the surface)
                 idx[self.sea.depth(keep["lat"], keep["lon"]) > blockworker.WATER_BED_M] = surfacemod.MUD
@@ -4009,13 +3922,8 @@ class Server:
                 log.info("block %s built before its map cells were here (roads %s, surface %s): painted again later",
                          key, info.get("roadsComplete"), info.get("surfaceComplete"))
             self.roads_rebuild.add(key)
-            # (a block without its roads is painted again once they are here, not once the land cover is too: a cell
-            # whose land cover was slow or never came kept the roads of the block grass and dirt under their markings
-            # for good, Discord 2026-11-09, the Tomei at Kaisei; the land cover then repaints it again when it comes)
-            self.roads_need[key] = "roads" if info.get("roadsComplete") is False else "landcover"
         else:
             self.roads_rebuild.discard(key)
-            self.roads_need.pop(key, None)
         self.evict_heightmaps(fresh=key)
 
     def evict_heightmaps(self, fresh=None):
@@ -5498,8 +5406,8 @@ class Connection:
         # field's detail (lodScale times the layout's K: the distance a level splits at), the tree tiles' reach
         # (treeScale) and the far buildings', skyline's and far bridges' (buildingScale); 1 = the defaults
         self.lod_scale = self.tree_scale = self.building_scale = 1.0
-        self.load_priority = "all"              # what loads first (LOAD_PRIORITIES; the mod's "Load first" setting)
-        self._defer_since = None                # monotonic time the current priority hold began
+        self.load_priority = "all"
+        self._defer_since = None
         self.view_cap = None                    # the far field's radius at most (m): the mod's fixed view distance
 
     async def map_tiles(self, msg):
@@ -5536,34 +5444,20 @@ class Connection:
         files.request(want)
 
     async def route(self, msg):
-        """{"id", "lat0", "lon0", "lat1", "lon1", "via"?, "download"?} -> route_result {"id", "points": [[lat, lon]...],
-        "dist", "dur", "legs": [[dist_m, dur_s], ...]?, "elev": [[dist_m, elev_m], ...]?, "error"?} (via: [[lat, lon],
-        ...] the route passes through in order, routing.MAX_VIA at most; legs: with via, each leg's). Also (re)starts this route's corridor prefetch
+        """{"id", "lat0", "lon0", "lat1", "lon1", "download"?} -> route_result {"id", "points": [[lat, lon]...], "dist",
+        "dur", "elev": [[dist_m, elev_m], ...]?, "error"?}. Also (re)starts this route's corridor prefetch
         (route_download, routeahead.py; download: "off", "ahead" (ROUTE_AHEAD_MAX_M, the default) or "route" (the
         whole route, up to ROUTE_WHOLE_MAX_M))."""
         self.route_dl_version += 1
         version = self.route_dl_version
         out = {"type": "route_result", "id": msg.get("id"), "points": [], "dist": 0.0, "dur": 0.0}
-        for attempt in range(ROUTE_429_TRIES):
-            try:
-                r = await asyncio.get_running_loop().run_in_executor(
-                    self.s.ui_pool, routingmod.plan, float(msg["lat0"]), float(msg["lon0"]), float(msg["lat1"]),
-                    float(msg["lon1"]), self.s.net, msg.get("bearing"), routingmod.via_points(msg.get("via")))
-                out.update(r)
-                out.pop("error", None)
-                break
-            except Exception as e:      # offline, no route, rate limited: the mod falls back to steering
-                out["error"] = f"{type(e).__name__}: {e}"[:200]
-                if not isinstance(e, netfetch.RateLimited) or attempt + 1 >= ROUTE_429_TRIES:
-                    break
-                # (rate limited: the latest destination asked again after the host's wait; a destination changed
-                # twice in 2 s got a 429 and no route until it was set again, GitHub #1027)
-                wait = getattr(e, "retry_after", None) or ROUTE_429_WAIT_S * (attempt + 1)
-                log.info("route %s: rate limited, again in %.0f s", msg.get("id"), wait)
-                await asyncio.sleep(min(float(wait), ROUTE_429_MAX_WAIT_S))
-                if version != self.route_dl_version:
-                    log.info("route %s: superseded while waiting", msg.get("id"))
-                    return              # (a newer destination's request answers)
+        try:
+            r = await asyncio.get_running_loop().run_in_executor(
+                self.s.ui_pool, routingmod.plan, float(msg["lat0"]), float(msg["lon0"]), float(msg["lat1"]),
+                float(msg["lon1"]), self.s.net, msg.get("bearing"))
+            out.update(r)
+        except Exception as e:          # offline, no route, rate limited: the mod falls back to steering
+            out["error"] = f"{type(e).__name__}: {e}"[:200]
         if "error" not in out and self.s.dem is not None and out["points"]:
             try:                        # the map's elevation profile: a nice-to-have, the route works without it
                 out["elev"] = await asyncio.get_running_loop().run_in_executor(
@@ -6106,8 +6000,7 @@ class Connection:
     async def area_plan(self, msg):
         """{"id", "s", "w", "n", "e"} or {"id", "route": "current", "half"} -> area_plan_result {"id", "ok", km2, items,
         missing, downloadBytes, diskBytes, seconds, days, hosts, excluded, km? (a route's length), "error"?}
-        (areas.Areas.plan / plan_route, in an executor thread: no network, but a box near Germany fetches Germany's
-        border data once, geo_content_key)."""
+        (areas.Areas.plan / plan_route: no network)."""
         out = {"type": "area_plan_result", "id": msg.get("id"), "ok": False}
         if self.s.areas is None:
             out["error"] = "saved areas need the download cache"
@@ -6661,22 +6554,8 @@ class Connection:
         elif kind == "direction_signs":         # the settings page's switch: the sign tiles again, with or without
             if self.s.set_dirs(msg.get("on")):
                 self.signs.refresh()
-        elif kind == "road_signs":              # the settings page's switch: the sign tiles again, with or without
-            if self.s.set_rsigns(msg.get("on")):
-                self.signs.refresh()
-        elif kind == "town_signs":              # the settings page's switch: the road and sign tiles again, with or without
-            if self.s.set_towns(msg.get("on")):
-                self.roads.close()
-                self.roads = road_tracker(self)
-                self.signs.refresh()
         elif kind == "graphics":                # the settings page's graphics knobs (set_graphics)
             self.set_graphics(msg)
-        elif kind == "german_junctions":        # the settings page's switch: the road and sign tiles again, with or without
-            if self.s.set_dej(msg.get("on")):   # (and the AI's graph: its stops, give-ways and zone speeds)
-                self.roads.close()
-                self.roads = road_tracker(self)
-                self.signs.refresh()
-                self.nav.refresh()
         elif kind == "gas_stations":            # the settings page's switch: the road tiles again, with or without
             if self.s.set_gas_stations(msg.get("on")):
                 self.roads.close()
@@ -6855,9 +6734,12 @@ class Connection:
             if cache.set_cap(cap):
                 log.info("cache: cap %s (from the mod)", f"{cap:g} GB" if cap else "unlimited")
         if msg.get("clear") is True:
+            category = msg.get("category")
+            if category is not None and category not in cache.CATEGORY_NAMES:
+                raise ValueError(f"cache category {category!r}")
             async def run():
-                _, freed = await self.loop.run_in_executor(None, cache.clear)
-                self.send(cache.message(cleared=freed))
+                _, freed = await self.loop.run_in_executor(None, lambda: cache.clear(category=category))
+                self.send(cache.message(cleared=freed, cleared_category=category))
             self.spawn(run())
         else:
             self.send(cache.message())
@@ -7411,12 +7293,8 @@ class Connection:
         return bool(self.dirty or self.inflight)
 
     def priority_defers(self):
-        """The kinds of work held back this pose by the 'Load first' setting (self.load_priority): a set of "far"
-        (the far terrain field), "veg", "bldg" (far buildings, skyline, far bridges), "extras" (turbines, the AI graph,
-        distant traffic). 'all': none. 'roads'/'rails': those wait until the road tiles round the car are in (rails and
-        tunnels are built inside the road tiles, so both are the same hold; kept apart for the setting's wording).
-        'terrain': the road tiles wait until the far field is built. Never held back: the physics block under the car.
-        A hold ends after LOAD_DEFER_MAX_S."""
+        """The kinds of work held back this pose by the Load first setting: far, veg, bldg, extras; roads waits
+        under terrain. Never the physics block under the car; a hold ends after LOAD_DEFER_MAX_S."""
         p = self.load_priority
         hold = frozenset()
         if p in ("roads", "rails") and self.s.mapdata is not None:
@@ -7694,9 +7572,8 @@ class Connection:
         return xy
 
     def camera_away(self, cam):
-        """The point a pose's cam is about when it is more than VIEW_AWAY_M from the car, else None: the 3D map's
-        orbit target (tx / ty) when the pose carries one, otherwise the camera's own (x, y) (a free camera, a far
-        chase camera). What is drawn follows it: the far field, and the road, tree and far building tiles
+        """The camera's (x, y) from a pose's cam when it is more than VIEW_AWAY_M from the car (a free camera, a far
+        chase camera), else None. What is drawn follows it: the far field, and the road, tree and far building tiles
         round it as well as round the car; what collides stays round the car (the terrain block, the road and
         building colliders in the tiles round the car, the nav graph). The user, 2026-10-20: "All collision ...
         should be following the car while visual stuff should follow the camera"."""
@@ -7784,9 +7661,7 @@ class Connection:
         la, lo, _ = anchor.frame.enu_to_geodetic(np.array([key[1] - half, key[1] + half]),
                                                  np.array([key[2] - half, key[2] + half]), 0.0)
         cells = mapcells.cells_for_bbox(float(np.min(la)), float(np.min(lo)), float(np.max(la)), float(np.max(lo)))
-        need = s.roads_need.get(key, "landcover")
-        if not all(s.mapdata.has(k, "roads") and (need == "roads" or s.surface is None or s.mapdata.has(k, "landcover"))
-                   for k in cells):
+        if not all(s.mapdata.has(k, "roads") and (s.surface is None or s.mapdata.has(k, "landcover")) for k in cells):
             return                          # (not here yet: asked again at the next pose)
         self.roads_busy = True
         s.roads_rebuild.discard(key)
@@ -9327,13 +9202,10 @@ def main():
     ap.add_argument("--buildings", choices=("on", "off"), default="off",
                     help="3D buildings from the Overture footprints with the road tiles (buildings.py; needs --roads "
                          "on): heights and roofs predicted where the data has none")
-    ap.add_argument("--regional-poles", choices=("off", "poles", "fr-demo", "fr-all", "fr-varied", "europe"),
-                    default=os.environ.get("BNE_REGIONAL_POLES", "off"),
+    ap.add_argument("--regional-poles", choices=("off", "fr-demo", "fr-all", "fr-varied", "europe"), default="off",
                     help="regional furniture: off=stock, fr-demo=50/50 poles, fr-all=concrete poles, "
                          "fr-varied=French kit; europe=country-specific European scenery and Quebec/Turkish STOP lettering; "
-                         "worldwide country polygons at each object, French assets in FR only; poles=only the country's own poles "
-                         "(Europe, Turkey...: concrete and wood by country, everything else stock; "
-                         "BNE_REGIONAL_POLES=poles turns it on, default off)")
+                         "worldwide country polygons at each object, French assets in FR only (default off)")
     ap.add_argument("--gas-stations", choices=("on", "off"), default="off",
                     help="gas stations with refuelling at real stations (gasstations.py; Overture places, needs "
                          "--roads on): West Coast USA's pumps and canopies, the stock refuel prompt")
