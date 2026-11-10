@@ -75,3 +75,10 @@ class FootbridgeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_a_footbridge_too_low_over_a_railway_is_left_out(self):
+        xy = np.array([[100.0, 128.0], [160.0, 128.0]])
+        zg = flat(xy)
+        self.assertIsNotNone(footbridges.deck(xy, zg, []), "clear ground under it")
+        rail = (np.array([[130.0, 100.0], [130.0, 156.0]]), 3.5, 10.5)
+        self.assertIsNone(footbridges.deck(xy, zg, [], [rail]), "a train's height under a low deck")

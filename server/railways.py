@@ -2165,7 +2165,7 @@ def _platforms(mesh, frame, box, infra_fn, rails, prof, material):
                     d = np.hypot(rxy[:, 0] - c[0], rxy[:, 1] - c[1])
                     j = int(np.argmin(d))
                     if best is None or d[j] < best[0]:
-                        best = (float(d[j]), float(np.asarray(zb)[j]))
+                        best = (float(d[j]), float(np.asarray(zb)[j]), rxy[j].copy())
                 if best is None or best[0] > PLATFORM_REACH_M:
                     continue
                 rel = xy - c
@@ -2176,6 +2176,19 @@ def _platforms(mesh, frame, box, infra_fn, rails, prof, material):
                 z = best[1]
                 mesh.boxes(c[None], ax[None], ay[None], np.array([hx]), np.array([hy]),
                            np.array([z - 0.3]), np.array([z + PLATFORM_H]), material)
+                # the yellow safety line along the platform edge facing the track (station interiors looked bare)
+                side = 1.0 if float((best[2] - c) @ ay) >= 0.0 else -1.0
+                mid = c + ay * side * (hy - 0.38)
+                half = max(0.0, hx - 0.15)
+                p0, p1 = mid - ax * half, mid + ax * half
+                off = ay * 0.08
+                topz = z + PLATFORM_H + 0.012
+                edge_a = np.array([[p0[0] + off[0], p0[1] + off[1], topz],
+                                   [p1[0] + off[0], p1[1] + off[1], topz]])
+                edge_b = np.array([[p0[0] - off[0], p0[1] - off[1], topz],
+                                   [p1[0] - off[0], p1[1] - off[1], topz]])
+                mesh.strip(edge_a, edge_b, 0.0, 0.16, np.zeros(2), mesh.mat("line_yellow"),
+                           np.array([0.0, 0.0, 1.0]))
 
 
 def tile_mesh(frame, tx, ty, cells, ground, sign_style=None, far_ground=None, wet=None, tube_out=None,
@@ -2206,6 +2219,9 @@ def tile_mesh(frame, tx, ty, cells, ground, sign_style=None, far_ground=None, we
     tunnel_ports = _tunnel_portals(rails) if tunnel_z else {}
     bore_w = _bore_widths(rails, tunnel_z) if tunnel_z else {}
     twins = _twin_tubes(rails, tunnel_z) if tunnel_z else {}
+    rail_crossers = [(xy, 3.5, float(np.median(zb + BALLAST_H + RAIL_H)))
+                     for (_fid, _cls, kind, xy), (zb, _zg) in zip(rails, prof)
+                     if kind in ("ground", "bridge") and len(xy) >= 2]
     crossers = []
     if cr:                                          # (one ground call for all of them: its cost is per call)
         zc = np.asarray(ground(np.concatenate([ln for ln, _ in cr])), np.float64)
@@ -2322,7 +2338,7 @@ def tile_mesh(frame, tx, ty, cells, ground, sign_style=None, far_ground=None, we
                 sp = _sleepers(s, xy, u, top, i, j, SLEEPERS_GONE[w])
                 if sp is not None:
                     small.append((sp, SLEEPER_W / 2, SLEEPER_L / 2, mesh.mat(SLEEPER_WORN[w])))
-    footbridges.add(mesh, walk, ground, crossers, ex, concrete, small)
+    footbridges.add(mesh, walk, ground, crossers, ex, concrete, small, rail_crossers)
     small.sort(key=lambda e: -e[2])                 # (the piers first: a deck needs them more than its sleepers)
     for (c, along, across, z0, z1), hx, hy, mi in small:
         room = (VERTS_MAX - mesh.nv) // 8

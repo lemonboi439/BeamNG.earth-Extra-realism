@@ -23,6 +23,7 @@ END_M = 3.0                 # m from either end where the deck may meet the grou
 CLEAR_GROUND_M = 1.0        # m the deck's underside stands over the ground somewhere between those, at least
 BURIED_M = 0.5              # m: the ground standing higher over the walking surface than this between them: no deck
 CLEAR_ROAD_M = 4.5          # m its underside stands over a carriageway under it, at least
+CLEAR_RAIL_M = 5.5          # m its underside stands over a railway's rail top under it, at least (a train's height)
 LEN_RANGE_M = (4.0, 400.0)  # a bridge piece's length (shorter: a culvert's boardwalk; longer: bad data)
 PIER_EVERY = 20.0           # m between piers
 PIER_ALONG = 0.6            # m
@@ -106,7 +107,7 @@ def _over_roads(xy, crossers):
     return on
 
 
-def deck(xy, zg, crossers):
+def deck(xy, zg, crossers, rails=()):
     """The walking surface's heights (k,) of a bridge piece xy (k, 2) over the ground zg (k,) there (the drawn ground:
     a road under it is its surface), or None where the straight line between its ends does not clear what it crosses
     (CLEAR_*). Pure."""
@@ -123,12 +124,18 @@ def deck(xy, zg, crossers):
     road = _over_roads(xy, crossers)
     if (room[mid & road] < CLEAR_ROAD_M).any():
         return None                 # (a slab across a carriageway at its level)
+    if rails:
+        rail = _over_roads(xy, rails)
+        if rail.any():
+            top = max(z for _line, _hw, z in rails)
+            if (z[mid & rail] - DECK_D < top + CLEAR_RAIL_M).any():
+                return None         # (a footbridge too low over a train)
     if (z[mid] < zg[mid] - BURIED_M).any() or room[mid].max() < CLEAR_GROUND_M:
         return None                 # (in the ground: the elevation's own bridge, a hill; or nothing under it)
     return z
 
 
-def add(mesh, bridges, ground, crossers, ex, concrete, small):
+def add(mesh, bridges, ground, crossers, ex, concrete, small, rails=()):
     """The decks of bridges (parts') into railways' _Mesh mesh: the slab and its parapets over the points within ex (the
     tile's box with its overlap), the piers into small (railways.tile_mesh draws them with the sleepers, as room
     allows). ground(xy (n, 2)) -> z (one call for all of them)."""
@@ -142,7 +149,7 @@ def add(mesh, bridges, ground, crossers, ex, concrete, small):
     for _fid, xy, w in bridges:
         zg = zg_all[k:k + len(xy)]
         k += len(xy)
-        z = deck(xy, zg, crossers)
+        z = deck(xy, zg, crossers, rails)
         if z is None:
             continue
         inside = (xy[:, 0] >= ex[0] - STEP_M) & (xy[:, 0] <= ex[2] + STEP_M) & \
