@@ -766,6 +766,21 @@ class _Parts:
     the meshes and rows of everything else."""
 
 
+def _de_routes(md, keys):
+    """The road_routes layers of the map cells keys, for the German junction signs' ref ranks (designs.context), read
+    as dirsigns._route_rows reads them: a cell whose layer fails or is missing gives none (its roads rank by class)."""
+    out = []
+    for key in keys:
+        try:
+            layer = md.cell(key, layers=("road_routes",), kind="demand").layers.get("road_routes")
+        except Exception as error:
+            log.debug("road routes of %s: %s", key, error)
+            continue
+        if layer is not None and len(layer):
+            out.append(layer)
+    return out
+
+
 DEM_WARM_MARGIN_M = 250.0   # m round a road tile whose DEM tiles _dem_warm fetches ahead (its roads' overlap, props)
 DEM_WARM_MAX = 64           # DEM tiles at most (a coarse zoom's tile covers the box anyway)
 _dem_warm_ex = None

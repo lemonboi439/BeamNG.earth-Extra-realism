@@ -24,7 +24,6 @@ import os
 import struct
 import threading
 import time
-import weakref
 from runtimeprofiler import ThreadPoolExecutor
 
 import numpy as np
@@ -285,9 +284,6 @@ def paint_roads(idx, lat, lon, feats_list, square, urban_fn=None, widths=None, e
             add(verge, c, r, width / 2 + ROAD_EDGE_M + VERGE_M)    # (VERGE_M past the road's material)
 
     copies = roadsmod.copies_of(feats_list)     # (each joint's taper from its own cell: roads.joint_desc)
-    import geodesy
-    placement = roadsmod.placement_context(feats_list, urban_fn, widths)   # (where the road tiles draw them)
-    pfr = geodesy.EnuFrame(la_c, lo_c) if placement.on else None
 
     def taper_of(f):
         return roadsmod.road_tapers(f, urban_fn, widths)
@@ -314,8 +310,6 @@ def paint_roads(idx, lat, lon, feats_list, square, urban_fn=None, widths=None, e
             mw = roadsmod.median_width(specs[i])
             ms = roadsmod.median_side(specs[i])
             for ring in roadsmod.ground_parts(feats, i):      # not bridges / tunnels
-                if pfr is not None:
-                    ring = placement.ring(pfr, feats, i, ring, specs[i], fid)
                 line(ring[:, 0], ring[:, 1], specs[i], aisle,
                      roadsmod.joint_desc(copies.get(fid, [(feats, i)]), taper_of))
                 if ms is not None and mw > roadsmod.MEDIAN_SLAB_M and len(ring) >= 2:
@@ -430,7 +424,6 @@ def _road_segments(frame, x0, y0, size, w, h, feats_list, urban_fn=None, widths=
     nroad = 0
     seen = set()
     copies = roadsmod.copies_of(feats_list)     # (each joint's taper from its own cell: roads.joint_desc)
-    placement = roadsmod.placement_context(feats_list, urban_fn, widths)   # (where the road tiles draw them)
 
     def taper_of(f):
         return roadsmod.road_tapers(f, urban_fn, widths)
@@ -451,7 +444,6 @@ def _road_segments(frame, x0, y0, size, w, h, feats_list, urban_fn=None, widths=
                 continue
             hw = (sp.width / 2 + PHOTO_ROAD_EDGE_M) * px_m
             for ring in roadsmod.ground_parts(feats, i):
-                ring = placement.ring(frame, feats, i, ring, sp, fid)
                 e, n = mapgeom.enu_xy(feats, frame, ring)
                 c = (np.asarray(e) - x0) * px_m
                 r = (y0 + size - np.asarray(n)) * px_m
@@ -507,7 +499,6 @@ def gore_fills(frame, feats_list, box, urban_fn=None, widths=None):
 def _gore_fills(frame, feats_list, box, urban_fn=None, widths=None):
     import markings
     near, seen = [], set()
-    placement = roadsmod.placement_context(feats_list, urban_fn, widths)   # (where the road tiles draw them)
     for feats in feats_list:
         if feats is None or len(feats) == 0:
             continue
@@ -520,7 +511,6 @@ def _gore_fills(frame, feats_list, box, urban_fn=None, widths=None):
                 continue
             seen.add(fid)
             for k, ring in enumerate(roadsmod.ground_parts(feats, i)):
-                ring = placement.ring(frame, feats, i, ring, sp, fid)
                 e, n = mapgeom.enu_xy(feats, frame, ring)
                 if e.max() < box[0] or e.min() > box[2] or n.max() < box[1] or n.min() > box[3]:
                     continue
@@ -1705,38 +1695,6 @@ class Surface:
             out[inside] = r.sample(lon[inside], lat[inside])
         out[np.abs(lat) > mapcells.MAX_LAT] = POLAR_CLASS
         return out, complete
-
-    def block_classes(self, frame, cx, cy, lat, lon):
-        """Raw classes on a physics block's exact lattice, with bounded native reuse of overlapping chunks.
-
-        MapData's decoded layers are immutable. Weak identity tokens invalidate cached classes when a layer is
-        replaced or reloaded, without pinning its data. Incomplete inputs are never retained; overrides stay live.
-        Arbitrary-point consumers still use classes(). This is cache marshalling, not a second sampler/cache.
-        """
-        fast.require(171, "physics-block land-cover reuse")
-        lat, lon = np.asarray(lat, np.float64), np.asarray(lon, np.float64)
-        bounds = fast._ef.class_grid_bounds(lat, lon, WARP_OCTAVES)
-        if bounds is None:
-            return self.classes(lat, lon)
-        sources, snapshots = [], []
-        for key in mapcells.cells_for_bbox(*bounds):
-            # Check only; an unused halo cell must not trigger a download or an incomplete-input fault.
-            if not self.md.has(key, "landcover"):
-                return self.classes(lat, lon)
-            raster = self._cached(key)
-            snapshots.append(raster)  # pin only during this call, never for the cache's lifetime
-            sources.append((str(key), None if raster is None else weakref.ref(raster)))
-        cache = getattr(self, "_class_grid", None)
-        if cache is None:
-            cache = self._class_grid = fast._ef.ClassGridCache(8 * 1024 * 1024)
-        n = lat.shape[0]
-        if lat.shape != (n, n) or lon.shape != lat.shape:
-            raise ValueError("block_classes needs matching square grids")
-        plan, missing = cache.lookup((frame.lat0, frame.lon0, frame.h0, heightmap.SQUARE), WARP_OCTAVES,
-                                     heightmap.lattice_index(cx, n), heightmap.lattice_index(cy, n), n, sources)
-        values, complete = (self.classes(lat.ravel()[missing], lon.ravel()[missing]) if len(missing)
-                            else (np.empty(0, np.uint8), True))
-        return cache.finish(plan, np.ascontiguousarray(values, np.uint8), complete), complete
 
     def _is_queued(self, key):
         with self._lock:
