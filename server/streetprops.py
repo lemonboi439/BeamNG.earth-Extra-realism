@@ -199,3 +199,34 @@ def rows(frame, infra_fn, box, elev, roads=()):
         out.append([group, round(float(px), 2), round(float(py), 2), round(float(zz), 2),
                     round(math.degrees(yaw) % 360.0, 1), 1.0, height, 0.0])
     return out
+
+
+RAIL_CLEAR_M = 3.0          # m a manhole / gully / camera keeps off a track's centre (its ballast's foot)
+
+
+def clear_of_rails(rows, tracks, groups=("manhole", "grate", "speedcamera")):
+    """rows without the ground props in groups within RAIL_CLEAR_M of a track (tracks: [(xy (k, 2), half width)]).
+    A speed hump is kept: a level crossing's hump belongs on the road across the rails."""
+    if not tracks or not rows:
+        return rows
+    out = []
+    for r in rows:
+        if r[0] not in groups:
+            out.append(r)
+            continue
+        p = np.array([float(r[1]), float(r[2])])
+        near = False
+        for xy, half in tracks:
+            a = np.asarray(xy, np.float64)[:, :2]
+            if len(a) < 2:
+                continue
+            b = a[1:]
+            d = b - a[:-1]
+            t = np.clip(((p - a[:-1]) * d).sum(1) / np.maximum((d * d).sum(1), 1e-9), 0.0, 1.0)
+            q = a[:-1] + d * t[:, None]
+            if float(np.hypot(*(q - p).T).min()) <= half + RAIL_CLEAR_M:
+                near = True
+                break
+        if not near:
+            out.append(r)
+    return out

@@ -32,7 +32,14 @@ real curvature of the Earth.
   ending at a kink. (This is continuous drivable track, not yet NRails' selectable switch-collision
   network.)
 - **Street props:** manhole covers, gully grates, speed cameras and low UK 75 mm flat-top speed
-  humps (white ramp triangles, three widths matched to the carriageway).
+  humps (white ramp triangles, three widths matched to the carriageway). Manholes, grates and cameras
+  keep clear of every rail track; humps stay at level crossings.
+- **Footpaths and bridges:** mapped footbridges over roads, rivers and tracks are built again with a
+  slab, parapets and piers (1.9 footbridges.py, clearance-checked), and footway pavements join at
+  corners instead of ending in notches.
+- **Regional 3D assets:** the 1.9 gas-station engine now uses the mod's own pump, awning, canopy,
+  pillar, bollard and sign models instead of borrowing another map's props; landmarks and mapped
+  buildings with a 3dmr.eu model use their real exterior models (setting on by default).
 - **Street lights and trees:** lights follow the local development sample (no lamp on a bare verge
   unless OSM says `lit=yes`), UK streets use lamp posts rather than wooden pole lamps, and primary
   roads get street trees. The default tree density and distance are raised.

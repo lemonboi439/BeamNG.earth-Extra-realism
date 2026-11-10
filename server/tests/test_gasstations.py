@@ -165,7 +165,7 @@ class CanopyTest(unittest.TestCase):
         self.assertEqual([b.id for b in gs.find_canopies(st, shop, [shop, near, far], road)], ["roof1", "roof2"])
         site = gs.layout(st, [shop, near, far], road)
         self.assertEqual(set(site.drop_ids), {"roof1", "roof2"})
-        self.assertEqual(len([p for p in site.props if p["shape"] == gs._ROOF]), 2)
+        self.assertEqual(len([p for p in site.props if p["shape"].endswith("s_fuel_structure_06.dae")]), 2)
         self.assertGreater(len(site.areas), 100)
 
     def test_chained_roofs_need_a_canopy_shape(self):
@@ -275,7 +275,8 @@ class LayoutTest(unittest.TestCase):
         roof = rect("roof", 0.0, 22.0, 30.0, 21.0, cls="roof")
         site = gs.layout(STATION, [SHOP, roof], ROAD)
         self.assertEqual(site.drop_ids, ("roof",))
-        self.assertEqual(len([p for p in site.props if p["shape"] == gs._ROOF]), 1)
+        self.assertEqual([p["shape"].rsplit("/", 1)[-1] for p in site.props if "s_fuel_structure_0" in p["shape"]
+                          and not p["shape"].endswith("_07.dae")], ["s_fuel_structure_06.dae"])
         self.assertEqual(len(site.areas), 12)           # 4 islands (30 m / 7) of 3 pumps (19 m / 6.5)
         for a in site.areas:
             self.assertAlmostEqual(a["yaw"] % 180.0, 90.0, places=3)     # islands along y: across the short side
@@ -344,8 +345,8 @@ class LayoutTest(unittest.TestCase):
     def test_long_canopy_one_roof(self):
         roof = rect("roof", 0.0, 22.0, 46.0, 18.0, cls="roof")
         site = gs.layout(STATION, [SHOP, roof], ROAD)
-        self.assertEqual(len([p for p in site.props if p["shape"] == gs._ROOF]), 1)
-        self.assertEqual(len([p for p in site.props if p["shape"] == gs._PILLAR]), 12)
+        self.assertEqual(len([p for p in site.props if p["shape"].endswith("s_fuel_structure_06.dae")]), 1)
+        self.assertEqual(len([p for p in site.props if p["shape"].endswith("s_fuel_structure_07.dae")]), 12)
 
     def test_narrow_canopy_short_islands_across_it(self):
         # a Speedway near Pittsburgh: its mapped canopy is 73 x 8.6 m; the user's photo, 2026-10-23: short
@@ -356,7 +357,7 @@ class LayoutTest(unittest.TestCase):
         for a in site.areas:
             self.assertAlmostEqual(a["yaw"] % 180.0, 90.0, places=3)   # the islands across the canopy (along y)
             self.assertAlmostEqual(a["y"], 22.0, places=3)             # the pump in the island's middle
-        pillars = [p for p in site.props if p["shape"] == gs._PILLAR]
+        pillars = [p for p in site.props if p["shape"].endswith("s_fuel_structure_07.dae")]
         self.assertEqual(len(pillars), 10)                             # one per island ...
         for p in pillars:
             self.assertGreater(p["y"], 22.5)                           # ... behind its pump (away from the road)
@@ -367,7 +368,7 @@ class LayoutTest(unittest.TestCase):
         shop = rect("shop", 0.0, 75.0, 20.0, 18.0, cls="retail")
         st = gs.Station("st", 0.0, 75.0, "Speedway", "", ("p",), True)
         site = gs.layout(st, [shop], ROAD, long_ladder)
-        pillars = [p for p in site.props if p["shape"] == gs._PILLAR]
+        pillars = [p for p in site.props if p["shape"].endswith("s_fuel_structure_07.dae")]
         self.assertEqual(len(pillars), 8)                               # 2 islands of 32 m: each split in 2
 
     def test_narrow_canopy_pumps_clear_of_the_shop(self):
@@ -381,7 +382,7 @@ class LayoutTest(unittest.TestCase):
     def test_no_canopy_pump_pair(self):
         site = gs.layout(STATION, [SHOP], ROAD)
         self.assertEqual(site.drop_ids, ())
-        pumps = [p for p in site.props if p["shape"] == gs.PUMP_KIT["pump"][0] and p["collide"]]
+        pumps = [p for p in site.props if "s_fuel_pump_" in p["shape"] and p["collide"]]
         self.assertEqual(len(pumps), 2)
         self.assertEqual(len(site.areas), 2)
         for p in pumps:
@@ -765,14 +766,15 @@ class LayoutTest(unittest.TestCase):
         self.assertIsNotNone(gs.layout(st, [SHOP, can], ROAD))
 
     def test_pumps_match_the_roof(self):
-        # the canopy and every pump are the mod's own shape (tools/build_fuel_props.py)
+        # the roof slab (West Coast's s_fuel_structure_06) carries Trilobite's sign: every pump is Trilobite's too (the
+        # user, 2026-10-23: "the pumps are changing brands but the canopy is not")
         roof = rect("roof", 0.0, 22.0, 30.0, 21.0, cls="roof")
         shapes = set()
         for i in range(50):
             st = gs.Station(f"s{i}", 0.0, 45.0, "x", "", ("p",), True)
             for site in (gs.layout(st, [SHOP, roof], ROAD), gs.layout(st, [SHOP], ROAD)):
-                shapes |= {p["shape"] for p in site.props if p["shape"] == gs.PUMP_KIT["pump"][0]}
-        self.assertEqual(shapes, {gs.PUMP_KIT["pump"][0]})
+                shapes |= {p["shape"].rsplit("/", 1)[-1] for p in site.props if "s_fuel_pump_" in p["shape"]}
+        self.assertEqual(shapes, {"s_fuel_pump_2015.dae", "s_fuel_pump_2015_trilobite.dae"})
 
 
 class RegionTest(unittest.TestCase):
@@ -794,22 +796,22 @@ class RegionTest(unittest.TestCase):
         self.assertEqual(site.drop_ids, ("roof",))
         names = [p["shape"].rsplit("/", 1)[-1] for p in site.props]
         self.assertFalse([n for n in names if n.startswith("s_fuel_")], names)
-        self.assertEqual(names.count(gs.ITA_AWNING.rsplit("/", 1)[-1]), 4)   # 30 m: 2 sections of two halves
+        self.assertEqual(names.count("italy_petrolstation_awningSt.DAE"), 4)   # 30 m: 2 sections of two halves
         self.assertEqual(len(site.areas), 8)                                   # 2 pumps under each half
         for p in site.props:
             if "_pump_" in p["shape"]:
                 self.assertAlmostEqual(p["yaw"] % 180.0, 0.0, places=3)        # along the canopy (x)
                 self.assertTrue(inside_box(roof, p["x"], p["y"]), p)
-        self.assertEqual(names.count(gs.ITA_SIGN.rsplit("/", 1)[-1]), 1)
+        self.assertEqual(names.count("italy_petrolstation_brandsign.DAE"), 1)
 
     def test_europe_pair_italy_pumps(self):
         site = gs.layout(STATION, [SHOP], ROAD, style="europe")
         names = {p["shape"].rsplit("/", 1)[-1] for p in site.props if "pump" in p["shape"]}
-        self.assertTrue(names and names == {gs.ITA_PUMPS[0].rsplit("/", 1)[-1]}, names)
+        self.assertTrue(names and all(n.startswith("italy_petrolstation_pump_") for n in names), names)
 
     def eca(self, site):
-        units = [p for p in site.props if p["shape"] == gs.ECA_UNIT]
-        self.assertFalse([p for p in site.props if p["shape"].startswith("/levels/west_coast_usa/")], site.props)
+        units = [p for p in site.props if p["shape"].endswith("eca_gastation_pumps.DAE")]
+        self.assertFalse([p for p in site.props if "s_fuel_" in p["shape"]], site.props)
         return units
 
     def test_us_east_canopy_eca_units(self):
@@ -899,7 +901,7 @@ class RegionTest(unittest.TestCase):
 
     def test_us_east_pair_west_coast_pumps(self):
         site = gs.layout(STATION, [SHOP], ROAD, style="us_east")
-        self.assertTrue(any(p["shape"] == gs.PUMP_KIT["pump"][0] for p in site.props))
+        self.assertTrue(any(p["shape"].endswith("s_fuel_pump_2015.dae") for p in site.props))
 
     def test_style_shapes(self):
         # the shapes the mod preloads for the anchor's region (earthd anchor_ready fuelShapes): only that region's (a
@@ -907,7 +909,7 @@ class RegionTest(unittest.TestCase):
         names = {k: {x.rsplit("/", 1)[-1] for x in gs.style_shapes(k)} for k in ("default", "europe", "us_east")}
         self.assertFalse([n for n in names["default"] if n.startswith(("italy_", "eca_"))], names["default"])
         self.assertFalse([n for n in names["europe"] if n.startswith(("s_fuel_", "eca_"))], names["europe"])
-        self.assertIn(gs.ECA_UNIT.rsplit("/", 1)[-1], names["us_east"])
+        self.assertIn("eca_gastation_pumps.DAE", names["us_east"])
         import evchargers                       # (EV chargers are the style's own: none falls back)
         ev = {x.rsplit("/", 1)[-1] for x in evchargers.CHARGER_SHAPES["default"]}
         self.assertTrue(names["default"] - ev <= names["us_east"], "East Coast's fall back to West Coast's islands")
@@ -928,7 +930,7 @@ class RegionTest(unittest.TestCase):
         finally:
             gs.style_of = orig
         self.assertIn("b-roof", skip)
-        self.assertTrue(any(p["shape"] == gs.ITA_AWNING for p in recs[0]["props"]))
+        self.assertTrue(any(p["shape"].endswith("italy_petrolstation_awningSt.DAE") for p in recs[0]["props"]))
 
 
 def in_pad(site, x, y):
@@ -1065,13 +1067,13 @@ class LaneLayoutTest(unittest.TestCase):
     def test_lane_site(self):
         site = gs.layout(STATION, [SHOP], ROAD, LADDER)
         self.assertEqual(site.drop_ids, ())
-        self.assertEqual(len([p for p in site.props if p["shape"] == gs._ROOF]), 1)
-        self.assertEqual(len([p for p in site.props if p["shape"] == gs._PILLAR]), 6)
+        self.assertEqual(len([p for p in site.props if p["shape"].endswith("s_fuel_structure_06.dae")]), 1)
+        self.assertEqual(len([p for p in site.props if p["shape"].endswith("s_fuel_structure_07.dae")]), 6)
         self.assertEqual(len(site.areas), 6)                    # 3 islands of 16 m, 2 pumps each
         for a in site.areas:
             self.assertTrue(12.0 < a["y"] < 30.0 and -14.0 < a["x"] < 7.0, a)
             self.assertNotIn(round(a["x"], 3), (-14.0, -7.0, 0.0, 7.0))   # on the islands, not in the lanes
-        roof = next(p for p in site.props if p["shape"] == gs._ROOF)
+        roof = next(p for p in site.props if p["shape"].endswith("s_fuel_structure_06.dae"))
         self.assertGreater(roof["dz"], 4.0)
 
     def test_lane_pumps_face_the_lanes(self):
@@ -1080,7 +1082,7 @@ class LaneLayoutTest(unittest.TestCase):
         # "pumps are facing the wrong way"
         site = gs.layout(STATION, [SHOP], ROAD, LADDER)                 # lanes along y
         for p in site.props:
-            if p["shape"] == gs.PUMP_KIT["pump"][0] or p["shape"] == gs._PILLAR:
+            if "s_fuel_pump_" in p["shape"] or p["shape"].endswith("s_fuel_structure_07.dae"):
                 self.assertAlmostEqual(p["yaw"] % 180.0, 90.0, places=3, msg=p)
         for a in site.areas:
             self.assertAlmostEqual(a["yaw"] % 180.0, 90.0, places=3, msg=a)
@@ -1089,7 +1091,7 @@ class LaneLayoutTest(unittest.TestCase):
     def test_pair_pumps_face_the_lanes(self):
         site = gs.layout(STATION, [SHOP], ROAD)                         # the row parallel to the road: along x
         for p in site.props:
-            if p["shape"] == gs.PUMP_KIT["pump"][0]:
+            if "s_fuel_pump_" in p["shape"]:
                 self.assertAlmostEqual(p["yaw"] % 180.0, 0.0, places=3, msg=p)
 
     def test_lanes_and_outline_drop_the_outline(self):
@@ -1233,7 +1235,7 @@ class TileTest(unittest.TestCase):
         recs, skip = gs.tile_sites(FRAME, 0, 0, md, flat)
         self.assertEqual(len(recs), 1)
         self.assertIn("b-roof", skip)
-        self.assertTrue(any(p["shape"] == gs.ECA_UNIT for p in recs[0]["props"]))     # (us_east)
+        self.assertTrue(any(p["shape"].endswith("eca_gastation_pumps.DAE") for p in recs[0]["props"]))     # (us_east)
         self.assertEqual(len(gs.service_lines(FRAME, [md.all["roads"]], 240.0, 100.0, 100.0)), 4)
 
     def test_reach_of(self):
@@ -1582,34 +1584,34 @@ class RealSpotsTest(unittest.TestCase):
         # a BP in Pittsburgh: its canopy a mapped building=roof, East Coast's units over it (us_east)
         rec, skip = self.site(40.403093, -80.041343)
         self.assertEqual(len(skip), 1, "the OSM roof left out")
-        self.assertTrue(any(p["shape"] == gs.ECA_UNIT for p in rec["props"]))
+        self.assertTrue(any("eca_gastation_pumps" in p["shape"] for p in rec["props"]))
         self.assertGreaterEqual(len(rec["areas"]), 4)
 
     def test_imagery_canopy(self):
         # a Sunoco in Butler: no mapped canopy; the untagged imagery outline between the shop and the road is the canopy
         rec, skip = self.site(40.861281, -79.900648)
         self.assertEqual(len(skip), 1, "the imagery outline left out")
-        self.assertTrue(any(p["shape"] == gs.ECA_UNIT for p in rec["props"]))
+        self.assertTrue(any("eca_gastation_pumps" in p["shape"] for p in rec["props"]))
 
     def test_pin_on_road(self):
         # a Sunoco in Pittsburgh: its pin 2.4 m from the road; its two mapped canopies (two islands: West Coast's)
         rec, skip = self.site(40.465627, -79.955447)
         self.assertEqual(len(skip), 2, "both mapped canopies left out")
-        self.assertTrue(any(p["shape"] == gs._ROOF for p in rec["props"]))
+        self.assertTrue(any("s_fuel_structure_06" in p["shape"] for p in rec["props"]))
 
     def test_home_shop(self):
         # United Petroleum in Nagambie, Victoria (a player's report): its shop mapped as a residential building, its
         # canopy a mapped roof beside it (_home_shop); the Astron pin 40 m away is the same station (one per shop)
         rec, skip = self.site(-36.79432, 145.15094)
         self.assertEqual(len(skip), 1, "the OSM roof left out")
-        self.assertTrue(any(p["shape"] == gs._ROOF for p in rec["props"]))
+        self.assertTrue(any("s_fuel_structure_06" in p["shape"] for p in rec["props"]))
 
     def test_one_building_japan(self):
         # an ENEOS in Tokyo (2026-10-26): the whole station one unclassed 451 m2 outline around its pin
         # (_one_building_site); before, Tokyo and Osaka laid out 0 of 20 stations
         rec, skip = self.site(35.678616, 139.777064)
         self.assertEqual(len(skip), 1, "the station's outline left out")
-        self.assertTrue(any(p["shape"] == gs._ROOF for p in rec["props"]))
+        self.assertTrue(any("s_fuel_structure_06" in p["shape"] for p in rec["props"]))
         self.assertGreaterEqual(len(rec["areas"]), 2)
 
 

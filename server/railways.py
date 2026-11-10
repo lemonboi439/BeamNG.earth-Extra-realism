@@ -20,6 +20,7 @@ import os
 
 import numpy as np
 
+import footbridges
 import mapgeom
 import roadmesh
 import roads
@@ -34,7 +35,8 @@ DRAWN = {"standard_gauge", "narrow_gauge", "light_rail", "subway"}
 GAUGE_M = 1.435             # standard gauge between the rails' inner faces ...
 FI_GAUGE_M = 1.524          # ... the Finnish (Russian) broad gauge in the Finnish fork
 NARROW_GAUGE_M = 1.0
-STEP_M = 2.0                # m between cross-sections, from each part's start (the same at every tile)
+STEP_M = 2.0
+FOOTBRIDGES_ON = os.environ.get("BNE_FOOTBRIDGES", "on") != "off"     # (footbridges.py)                # m between cross-sections, from each part's start (the same at every tile)
 SMOOTH_M = 10.0             # m either side the bed's height is averaged over: the real elevation, its DEM bumps out
                             # (50 lifted the bed off the ground, the user, 2026-10-25: "follow the real elevation")
 GRADE = 0.02                # the steepest a deck or an approach ramp climbs (2 %: a main line's)
@@ -2192,8 +2194,10 @@ def tile_mesh(frame, tx, ty, cells, ground, sign_style=None, far_ground=None, we
     ex = (box[0] - roads.OVERLAP, box[1] - roads.OVERLAP, box[2] + roads.OVERLAP, box[3] + roads.OVERLAP)
     worn, gauges, levels = {}, {}, {}
     rails = parts(frame, cells, box, clip=True, worn=worn, gauges=gauges, levels=levels)
-    if not any(_box_hit((xy[:, 0].min(), xy[:, 1].min(), xy[:, 0].max(), xy[:, 1].max()),
-                        (ex[0] - STEP_M, ex[1] - STEP_M, ex[2] + STEP_M, ex[3] + STEP_M)) for *_, xy in rails):
+    walk = footbridges.parts(frame, cells, box) if FOOTBRIDGES_ON else []    # (walkways' bridges: GitHub #905)
+    walk = [w for w in walk if _box_hit((w[1][:, 0].min(), w[1][:, 1].min(), w[1][:, 0].max(), w[1][:, 1].max()),
+                                        (ex[0] - STEP_M, ex[1] - STEP_M, ex[2] + STEP_M, ex[3] + STEP_M))]
+    if not rails and not walk:
         return None
     cr = crossings(frame, cells, box, reach=50.0) + tunnels
     prof = profile(rails, ground, cr + coarse_underpasses(frame, cells, box, rails), levels=levels)
@@ -2318,6 +2322,7 @@ def tile_mesh(frame, tx, ty, cells, ground, sign_style=None, far_ground=None, we
                 sp = _sleepers(s, xy, u, top, i, j, SLEEPERS_GONE[w])
                 if sp is not None:
                     small.append((sp, SLEEPER_W / 2, SLEEPER_L / 2, mesh.mat(SLEEPER_WORN[w])))
+    footbridges.add(mesh, walk, ground, crossers, ex, concrete, small)
     small.sort(key=lambda e: -e[2])                 # (the piers first: a deck needs them more than its sleepers)
     for (c, along, across, z0, z1), hx, hy, mi in small:
         room = (VERTS_MAX - mesh.nv) // 8

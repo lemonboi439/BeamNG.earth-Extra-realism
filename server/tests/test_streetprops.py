@@ -47,3 +47,14 @@ class HumpTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RailClearTest(unittest.TestCase):
+    def test_manholes_and_cameras_stay_off_the_track_but_humps_stay(self):
+        track = (np.array([[0.0, 0.0], [100.0, 0.0]]), 3.0)
+        rows = [["manhole", 50.0, 0.0, 0.0, 0.0, 1.0, 0.03, 0.0],
+                ["grate", 50.0, 2.0, 0.0, 0.0, 1.0, 0.05, 0.0],
+                ["speedcamera", 50.0, -10.0, 0.0, 0.0, 1.0, 3.94, 0.0],
+                ["speedhump", 50.0, 0.0, 0.0, 0.0, 1.0, 0.075, 0.0]]
+        kept = streetprops.clear_of_rails(rows, [track])
+        self.assertEqual([r[0] for r in kept], ["speedcamera", "speedhump"])

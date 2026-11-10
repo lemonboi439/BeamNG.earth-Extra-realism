@@ -974,7 +974,9 @@ def _tile_parts(mark, frame, tile, zoom, g, buildings, left_hand, mph, gas_stati
         try:
             props.extend(fences.rows(frame, infra_fn, box, elev))
             import streetprops
-            props.extend(streetprops.rows(frame, infra_fn, box, elev, near_roads))
+            fresh = streetprops.rows(frame, infra_fn, box, elev, near_roads)
+            tracks = railways.walk_cut_lines(frame, rcells, box)
+            props.extend(streetprops.clear_of_rails(fresh, tracks))
         except Exception as ex:
             log.warning("fences/street props: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
         import picnic
