@@ -2192,7 +2192,7 @@ def _platforms(mesh, frame, box, infra_fn, rails, prof, material):
 
 
 def tile_mesh(frame, tx, ty, cells, ground, sign_style=None, far_ground=None, wet=None, tube_out=None,
-              infra_fn=None):
+              infra_fn=None, return_decks=False):
     """The road tile (tx, ty)'s railway mesh (roadmesh.write's (positions, tris, uvs, materials, tri material)) or
     None. cells: the roads layers of the cells within REACH_M of the tile (cells_of_tile(..., margin=REACH_M));
     ground(xy (n, 2)) -> z: the drawn ground in the frame. far_ground: the natural ground, read beyond GRADED_NEAR_M
@@ -2211,9 +2211,13 @@ def tile_mesh(frame, tx, ty, cells, ground, sign_style=None, far_ground=None, we
     walk = [w for w in walk if _box_hit((w[1][:, 0].min(), w[1][:, 1].min(), w[1][:, 0].max(), w[1][:, 1].max()),
                                         (ex[0] - STEP_M, ex[1] - STEP_M, ex[2] + STEP_M, ex[3] + STEP_M))]
     if not rails and not walk:
-        return None
+        return (None, []) if return_decks else None
     cr = crossings(frame, cells, box, reach=50.0) + tunnels
     prof = profile(rails, ground, cr + coarse_underpasses(frame, cells, box, rails), levels=levels)
+    decks = ([{"n": np.column_stack((xy, zb + BALLAST_H)),
+               "w": 2 * (TRAM_DECK_HALF_M if cls == "tram" else DECK_HALF_M)}
+              for (_f, cls, kind, xy), (zb, _zg) in zip(rails, prof) if kind == "bridge"]
+             if return_decks else [])
     gaps = _neighbour_gaps(rails, [zb for zb, _g in prof])
     tunnel_z = tunnel_floors(rails, frame, ground, wet, levels) if any(k == "tunnel" for _f, _c, k, _xy in rails) else {}
     tunnel_ports = _tunnel_portals(rails) if tunnel_z else {}
@@ -2353,8 +2357,8 @@ def tile_mesh(frame, tx, ty, cells, ground, sign_style=None, far_ground=None, we
         _platforms(mesh, frame, box, infra_fn, rails, bed_prof, concrete)
     out = mesh.result()
     if out is not None and len(out[0]) > VERTS_MAX:     # (the ballast and rails alone past it: a rail yard)
-        return None
-    return out
+        return (None, []) if return_decks else None
+    return (out, decks) if return_decks else out
 
 
 # The materials only drawn (from mpsteppe's lean rail collider, in Madderose's PR #41): sleepers were ~40 % of a

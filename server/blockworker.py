@@ -1035,16 +1035,15 @@ def _tile_parts(mark, frame, tile, zoom, g, buildings, left_hand, mph, gas_stati
         props = (props or []) + rr_kits
     P.rtube = []                    # the rail tunnels' tube chunks (roadmesh.tunnel)
     P.rtmesh = None
-    P.rmesh = railways.tile_mesh(frame, tx, ty, rcells, rground,
+    P.rmesh, rail_decks = railways.tile_mesh(frame, tx, ty, rcells, rground,
                                  far_ground=railways.point_ground(
                                      frame, lambda la, lo: ground(frame, la, lo, _s.dem.sample(la, lo, zoom)),
                                      ("raw",) + tuple(rkey)),
                                  wet=_s.sea.depth if getattr(_s, "sea", None) is not None else None,
-                                 tube_out=P.rtube,
+                                 tube_out=P.rtube, return_decks=True,
                                  infra_fn=lambda key: _s.md.cell(key, layers=("infrastructure",), kind="demand")
                                  .layers.get("infrastructure"))
     P.rtmesh = roadmeshmod.tunnel(P.rtube, (x0, y0, 0.0)) if P.rtube else None
-    rail_decks = []
     mark("railways")
     bld = None
     garage_sound = ()

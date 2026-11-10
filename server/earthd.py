@@ -2645,6 +2645,7 @@ class Server:
             log.warning("stone walls: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
         tmesh = roadmeshmod.tunnel(chunks, (x0, y0, 0.0), rwalls)
         import railways
+        rtube = []
         rmesh, rail_decks = railways.tile_mesh(anchor.frame, tx, ty,
                                    [cell_fn(k) for k in roadsmod.cells_of_tile(anchor.frame, tx, ty, railways.REACH_M)],
                                    railways.point_ground(anchor.frame, elev, (aid, anchor.lat, anchor.lon)),
@@ -2652,7 +2653,9 @@ class Server:
                                        anchor.frame,
                                        lambda la, lo: self.ground(anchor.frame, la, lo, self.dem.sample(la, lo, zoom)),
                                        ("raw", aid, anchor.lat, anchor.lon)),
-                                   return_decks=True)
+                                   wet=self.sea.depth if self.sea is not None else None,
+                                   tube_out=rtube, infra_fn=infra_fn, return_decks=True)
+        rtmesh = roadmeshmod.tunnel(rtube, (x0, y0, 0.0)) if rtube else None
         bld = None
         garage_sound = ()
         oil_wells = []
@@ -2696,6 +2699,15 @@ class Server:
                     k, layers=("roads",), kind="demand").layers.get("roads")))
             except Exception as ex:
                 log.warning("shelters: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
+            import streetprops
+            try:
+                import railways as _rail
+                fresh = streetprops.rows(anchor.frame, infra_fn, box, elev, near_roads)
+                tracks = _rail.walk_cut_lines(anchor.frame, [cell_fn(k) for k in roadsmod.cells_of_tile(
+                    anchor.frame, tx, ty, _rail.REACH_M)], box)
+                props.extend(streetprops.clear_of_rails(fresh, tracks))
+            except Exception as ex:
+                log.warning("street props: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
             import industry
             garage_sound = (garage_sound + industry.refinery_sound_rows(anchor.frame, tx, ty, self.mapdata, elev)
                             + industry.power_plant_sound_rows(anchor.frame, tx, ty, self.mapdata, elev))
@@ -2712,7 +2724,8 @@ class Server:
                 log.warning("golf: tile %s_%s: %s: %s", tx, ty, type(ex).__name__, ex)
         return roadsmod.write_tile(self.out_dir, self.vfs_dir, aid, tx, ty, chunks, walks if self.sidewalks else None,
                                    mesh, dmesh, bld, props, wires, park, tunnel_mesh=tmesh, fuel=fuel,
-                                   rail_mesh=rmesh, guardrail_rows=guardrail_rows, garage_sound=garage_sound,
+                                   rail_mesh=rmesh, rail_tunnel=rtmesh, rail_tube=rtube,
+                                   guardrail_rows=guardrail_rows, garage_sound=garage_sound,
                                    custom_entries=custom_entries, signs=signs, wells=oil_wells, bld_none=bool(self.buildings),
                                    barrier_mesh=barrier_mesh, barrier_chunks=barrier_chunks,
                                    turbines=turbine_rows, towns=town_faces)
