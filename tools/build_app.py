@@ -139,6 +139,12 @@ def windows_runtime_binaries():
         paths.extend(glob.glob(os.path.join(prefix, "DLLs", "_ctypes.pyd")))
         paths.extend(glob.glob(os.path.join(prefix, "Library", "bin", "ffi*.dll")))
         paths.extend(glob.glob(os.path.join(prefix, "DLLs", "ffi*.dll")))
+        # Conda keeps the C libraries the stdlib extensions link against in Library/bin, not beside the .pyd: the
+        # frozen _sqlite3.pyd failed without sqlite3.dll, and the same held for expat, lzma, bz2 and decimal.
+        for dll in ("sqlite3.dll", "libexpat.dll", "liblzma.dll", "libbz2.dll", "libmpdec-4.dll",
+                    "libssl-3-x64.dll", "libcrypto-3-x64.dll", "zlib.dll"):
+            paths.extend(glob.glob(os.path.join(prefix, "Library", "bin", dll)))
+            paths.extend(glob.glob(os.path.join(prefix, "DLLs", dll)))
     return sorted(dict.fromkeys(p for p in paths if os.path.isfile(p)))
 
 
